@@ -20,6 +20,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
@@ -257,7 +258,7 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ); clp.gravity = Gravity.TOP or Gravity.START
 
-        val wrap = object : View(this) {
+        val wrap = object : FrameLayout(this) {
             override fun onTouchEvent(e: MotionEvent): Boolean {
                 when (e.action) {
                     MotionEvent.ACTION_DOWN -> {
@@ -271,8 +272,13 @@ class OverlayService : Service() {
                     MotionEvent.ACTION_UP -> {
                         val saved2 = draw.onTouch(e.rawX.toInt(), e.rawY.toInt(), corner, MotionEvent.ACTION_UP)
                         if (saved2) {
-                            prefs.coordROI = Rect(draw.rect)
-                            status.text = "coord ROI saved ${draw.rect.left},${draw.rect.top} → ${draw.rect.right},${draw.rect.bottom}"
+                            prefs.coordROI = Rect(
+                                draw.rect.left.toInt(),
+                                draw.rect.top.toInt(),
+                                draw.rect.right.toInt(),
+                                draw.rect.bottom.toInt()
+                            )
+                            status.text = "coord ROI saved ${draw.rect.left.toInt()},${draw.rect.top.toInt()} → ${draw.rect.right.toInt()},${draw.rect.bottom.toInt()}"
                             try { wm.removeView(this) } catch (_: Throwable) {}
                             calibrateView = null
                             rootView?.let {
@@ -288,6 +294,10 @@ class OverlayService : Service() {
             }
         }
         wrap.setBackgroundColor(0x33000000)
+        draw.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
         wrap.addView(draw)
         try { wm.addView(wrap, clp) } catch (_: Throwable) {}
         calibrateView = wrap
