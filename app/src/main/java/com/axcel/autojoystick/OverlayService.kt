@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -41,9 +42,14 @@ class OverlayService : Service() {
         try {
             prefs = PreferenceStore(this)
             ensureChannel()
-            startForeground(1, Notification.Builder(this, "autojoy")
+            val notif = Notification.Builder(this, "autojoy")
                 .setContentTitle("AutoJoystick running")
-                .setSmallIcon(android.R.drawable.ic_media_play).build())
+                .setSmallIcon(android.R.drawable.ic_media_play).build()
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(1, notif)
+            }
             wm = getSystemService(WINDOW_SERVICE) as WindowManager
             showOverlay()
         } catch (t: Throwable) {
