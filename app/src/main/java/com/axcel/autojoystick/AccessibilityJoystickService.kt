@@ -5,18 +5,23 @@ import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Path
 import android.os.Build
-import android.util.DisplayMetrics
-import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 
 class AccessibilityJoystickService : AccessibilityService() {
 
     companion object {
         var appContext: Context? = null
+        @Volatile var instance: AccessibilityJoystickService? = null
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        instance = null
+        return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -36,13 +41,5 @@ class AccessibilityJoystickService : AccessibilityService() {
             GestureDescription.StrokeDescription(p, 0, durationMs)
         ).build()
         dispatchGesture(g, null, null)
-    }
-
-    fun getScreenDpi(): Float {
-        val wm = (getSystemService(WINDOW_SERVICE) as WindowManager)
-        val dm = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        wm.defaultDisplay.getMetrics(dm)
-        return dm.density
     }
 }

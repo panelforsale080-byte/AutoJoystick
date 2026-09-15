@@ -1,27 +1,111 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="220dp"
+    android:layout_width="240dp"
     android:layout_height="wrap_content"
-    android:background="#CC18181B"
-    android:padding="10dp"
     android:orientation="vertical">
+
+    <!-- Minimized dot (visible when collapsed) -->
     <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="AutoJoystick"
+        android:id="@+id/ov_dot"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:background="#CC22A05A"
+        android:gravity="center"
+        android:text="AJ"
         android:textColor="#FFFFFF"
-        android:textStyle="bold"/>
-    <TextView
-        android:id="@+id/ov_coord"
+        android:textStyle="bold"
+        android:visibility="gone"/>
+
+    <!-- Expanded panel -->
+    <LinearLayout
+        android:id="@+id/ov_panel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="coord: —"
-        android:textColor="#7AE582"/>
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:text="Target: 51,35 (tap to change)"
-        android:textColor="#A9A9B7"/>
+        android:background="#E618181B"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/ov_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="AutoJoystick"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/ov_minimize"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="—"
+                android:textColor="#FFD54F"
+                android:textSize="18sp"
+                android:textStyle="bold"/>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/ov_coord"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="coord: —"
+            android:textColor="#7AE582"/>
+
+        <EditText
+            android:id="@+id/ov_target"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp"
+            android:hint="target coord e.g. 51,35"
+            android:inputType="text"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#6F6F7A"
+            android:textSize="14sp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/ov_start"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:backgroundTint="#22A05A"
+                android:text="START"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"/>
+
+            <Button
+                android:id="@+id/ov_stop"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:backgroundTint="#A02E2E"
+                android:text="STOP"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"/>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/ov_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="idle"
+            android:textColor="#A9A9B7"
+            android:textSize="12sp"/>
+    </LinearLayout>
 </LinearLayout>
