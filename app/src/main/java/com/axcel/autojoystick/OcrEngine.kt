@@ -8,34 +8,44 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
 object OcrEngine {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    // Matches "(131,116)" or "131,116"
-    private val coordRegex = Regex("""\(?\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)?""")
+    // tolerant: (131,116), 131/116, 131 116, [131,116], {131, 116}
+    val coordRegex = Regex("""[\[\(\{<]?\s*(\d{1,3})\s*[, /\-]\s*(\d{1,3})\s*[\]\)\}>]?""")
 
-    fun recognizeCoord(bitmap: Bitmap, onResult: (Pair<Int, Int>?) -> Unit) {
+    data class Result(val coord: Pair<Int, Int>?, val rawText: String)
+
+    fun recognizeCoord(bitmap: Bitmap, onResult: (Result) -> Unit) {
         try {
             val img = InputImage.fromBitmap(bitmap, 0)
             recognizer.process(img)
-                .addOnSuccessListener { result ->
+                .addOnSuccessListener { res ->
                     var best: Pair<Int, Int>? = null
-                    for (block in result.textBlocks) {
+                    val raw = StringBuilder()
+                    for (block in res.textBlocks) {
                         for (line in block.lines) {
-                            val t = line.text.trim()
-                            val m = coordRegex.find(t) ?: continue
-                            val x = m.groupValues[1].toIntOrNull() ?: continue
-                            val y = m.groupValues[2].toIntOrNull() ?: continue
-                            if (x <= 400 && y <= 400) {
-                                best = x to y
+                            if (raw.isNotEmpty()) raw.append('\n')
+                            raw.append(line.text)
+                            for (el in line.elements) {
+                                val m = coordRegex.find(el.text) ?: continue
+                                val x = m.groupValues[1].toIntOrNull() ?: continue
+                                val y = m.groupValues[2].toIntOrNull() ?: continue
+                                if (x in 0..400 && y in 0..400) {
+                                    best = x to y; break
+                                }
                             }
+                            if (best != null) break
                         }
+                        if (best != null) break
                     }
-                    onResult(best)
+                    Log.d("AJOCR", "raw='${raw.toString().take(120)}' coord=$best")
+                    onResult(Result(best, raw.toString()))
                 }
                 .addOnFailureListener { e ->
-                    Log.w("AutoJoystick", "ocr fail: ${e.message}")
-                    onResult(null)
+                    Log.w("AJOCR", "ocr fail: ${e.message}")
+                    onResult(Result(null, ""))
                 }
-        } catch (e: Throwable) {
-            onResult(null)
+        } catch (t: Throwable) {
+            Log.w("AJOCR", "throw: ${t.message}")
+            onResult(Result(null, ""))
         }
     }
 }

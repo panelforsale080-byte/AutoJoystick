@@ -2,21 +2,18 @@ package com.axcel.autojoystick
 
 import android.os.Handler
 import android.os.Looper
-import android.widget.TextView
 
 object JoystickController {
     var joystickBaseX: Float = 0f
     var joystickBaseY: Float = 0f
     var joystickRadius: Float = 180f
     var targetCoord: String = "51,35"
-    var currentCoord: String = ""
     @Volatile var currentXY: Pair<Int, Int>? = null
     @Volatile var running: Boolean = false
 
     private val handler = Handler(Looper.getMainLooper())
-    private val coordRegex = Regex("""\(?\s*(-?\d+)\s*,\s*(-?\d+)\s*\)?""")
+    private val coordRegex = Regex("""[\[\(\{<]?\s*(\d{1,3})\s*[, /\-]\s*(\d{1,3})\s*[\]\)\}>]?""")
 
-    // chained-stroke state (finger stays down, rotates smoothly)
     private var strokeActive = false
     private var lastEndX = 0f
     private var lastEndY = 0f
@@ -28,15 +25,6 @@ object JoystickController {
         }
     }
 
-    fun setCurrent(s: String) {
-        currentCoord = s
-        currentXY = parseCoord(s)
-    }
-
-    /**
-     * Map coords: X grows east, Y grows north.
-     * Screen Y grows downward -> invert map-Y for the drag direction.
-     */
     fun computeDrag(current: Pair<Int, Int>, target: Pair<Int, Int>, maxMapDist: Int = 30): Pair<Float, Float> {
         val dx = (target.first - current.first).toDouble()
         val dy = (target.second - current.second).toDouble()
@@ -49,9 +37,7 @@ object JoystickController {
     }
 
     fun onPositionUpdate(x: Int, y: Int) {
-        // OCR-derived update overrides whatever the user typed
         currentXY = x to y
-        currentCoord = "$x,$y"
         OverlayBus.push("$x,$y")
         val t = parseCoord(targetCoord) ?: return
         val dist = Math.hypot((t.first - x).toDouble(), (t.second - y).toDouble())
@@ -70,9 +56,7 @@ object JoystickController {
         }
     }
 
-    /** Main loop: NEVER block. If user typed (or OCR gave) current coord, drag toward target.
-     *  Otherwise walk in the straight direction (current->target) holding toward target. */
-    fun tick(status: TextView?) {
+    fun tick() {
         handler.removeCallbacksAndMessages(null)
         val target = parseCoord(targetCoord) ?: run {
             OverlayBus.status("invalid target $targetCoord"); return
@@ -82,18 +66,15 @@ object JoystickController {
                 if (!running) { releaseStroke(); return }
                 val svc = AccessibilityJoystickService.instance
                 if (svc == null) { OverlayBus.status("enable accessibility first"); running = false; releaseStroke(); return }
-                if (joystickBaseX <= 0f) { OverlayBus.status("press CAL then tap joystick center"); running = false; return }
+                if (joystickBaseX <= 0f) { OverlayBus.status("press CAL JOY first"); running = false; return }
 
                 val cur = currentXY
                 if (cur == null) {
-                    // No current coord available — drag blindly toward target angle, but keep moving.
-                    // We treat "current" as (target.x - 1, target.y) to force an east-direction initial drag
-                    // unless we have any other hint. Most useful default: head = north always works as probe.
-                    OverlayBus.status("no current coord — dragging straight (set current to fix)")
-                    val (ox, oy) = 0f to -joystickRadius * 0.7f // north on map = up on screen = -y
-                    val ex = joystickBaseX + ox
-                    val ey = joystickBaseY + oy
+                    // walk north (-y) as a probe while waiting for first OCR reading
+                    val ex = joystickBaseX
+                    val ey = joystickBaseY - joystickRadius * 0.6f
                     sendChain(svc, ex, ey)
+                    OverlayBus.status("probing north — wait OCR")
                     handler.postDelayed(this, 650)
                     return
                 }
@@ -105,7 +86,6 @@ object JoystickController {
                     OverlayBus.status("ARRIVED at ${target.first},${target.second}")
                     return
                 }
-
                 val (ox, oy) = computeDrag(cur, target)
                 val ex = joystickBaseX + ox
                 val ey = joystickBaseY + oy

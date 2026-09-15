@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="240dp"
+    android:layout_width="260dp"
     android:layout_height="wrap_content"
     android:orientation="vertical">
 
@@ -74,23 +74,6 @@
             android:textColorHint="#6F6F7A"
             android:textSize="14sp"/>
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="current coord (type if OCR fails)"
-            android:textColor="#A9A9B7"
-            android:textSize="11sp"/>
-        <EditText
-            android:id="@+id/ov_current"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:hint="e.g. 13,34"
-            android:inputType="text"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#6F6F7A"
-            android:textSize="14sp"/>
-
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -98,15 +81,26 @@
             android:orientation="horizontal">
 
             <Button
-                android:id="@+id/ov_calibrate"
+                android:id="@+id/ov_cal_joy"
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_marginEnd="4dp"
                 android:layout_weight="1"
                 android:backgroundTint="#555566"
-                android:text="CAL"
+                android:text="CAL JOY"
                 android:textColor="#FFFFFF"
-                android:textSize="13sp"/>
+                android:textSize="11sp"/>
+
+            <Button
+                android:id="@+id/ov_cal_coord"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:backgroundTint="#6B4DBB"
+                android:text="CAL COORD"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"/>
 
             <Button
                 android:id="@+id/ov_start"
@@ -132,10 +126,90 @@
         </LinearLayout>
 
         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="OCR settings (preview below)"
+            android:textColor="#A9A9B7"
+            android:textSize="11sp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="contrast"
+            android:textColor="#A9A9B7"
+            android:textSize="11sp"/>
+        <com.google.android.material.slider.Slider
+            android:id="@+id/ov_contrast"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:valueFrom="0.5"
+            android:valueTo="3.0"
+            android:stepSize="0.1"
+            android:value="1.8"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="brightness"
+            android:textColor="#A9A9B7"
+            android:textSize="11sp"/>
+        <com.google.android.material.slider.Slider
+            android:id="@+id/ov_brightness"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:valueFrom="-128"
+            android:valueTo="128"
+            android:stepSize="8"
+            android:value="-60"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="invert (light→dark)"
+                android:textColor="#A9A9B7"
+                android:textSize="11sp"/>
+            <Switch
+                android:id="@+id/ov_invert"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:thumbTint="#22A05A"
+                android:trackTint="#6F6F7A"/>
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/ov_preview"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="6dp"
+            android:scaleType="fitCenter"
+            android:background="#22FFFFFF"
+            android:contentDescription="OCR preview crop"/>
+
+        <TextView
+            android:id="@+id/ov_debug"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:text="raw: —"
+            android:textColor="#C7C7D1"
+            android:textSize="11sp"/>
+
+        <TextView
             android:id="@+id/ov_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="4dp"
             android:text="idle"
             android:textColor="#A9A9B7"
             android:textSize="12sp"/>

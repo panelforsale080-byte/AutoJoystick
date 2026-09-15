@@ -8,10 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
-import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -25,6 +21,7 @@ import android.os.IBinder
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import android.graphics.Rect
 
 class CaptureService : Service() {
 
@@ -41,58 +38,48 @@ class CaptureService : Service() {
     private var handler: Handler? = null
     private var screenW = 0
     private var screenH = 0
+    private lateinit var prefs: PreferenceStore
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
+            prefs = PreferenceStore(this)
             ensureChannel()
             val notif = Notification.Builder(this, "autojoy")
-                .setContentTitle("AutoJoystick capture")
-                .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .build()
+                .setContentTitle("AutoJoystick capture").setSmallIcon(android.R.drawable.ic_menu_camera).build()
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(2, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-            } else {
-                startForeground(2, notif)
-            }
-
-            val code = pendingResultCode
-            val data = pendingData
+            } else startForeground(2, notif)
+            val code = pendingResultCode; val data = pendingData
             if (data == null || code == 0) { stopSelf(); return START_NOT_STICKY }
-
             val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             projection = mpm.getMediaProjection(code, data)
-
             val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val dm = DisplayMetrics()
             @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm)
             screenW = dm.widthPixels; screenH = dm.heightPixels
-
             reader = ImageReader.newInstance(screenW, screenH, PixelFormat.RGBA_8888, 2)
             vdisp = projection?.createVirtualDisplay(
                 "ajcap", screenW, screenH, dm.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 reader!!.surface, null, null
             )
-
             running = true
             thread = HandlerThread("ajcap").also { it.start() }
             handler = Handler(thread!!.looper)
-            handler?.post(captureLoop)
+            handler?.post(loop)
         } catch (t: Throwable) {
-            Log.e("AutoJoystick", "CaptureService start crash", t)
-            stopSelf()
-            return START_NOT_STICKY
+            Log.e("AJ", "capture start crash", t); stopSelf(); return START_NOT_STICKY
         }
         return START_STICKY
     }
 
-    private val captureLoop = object : Runnable {
+    private val loop: Runnable = object : Runnable {
         override fun run() {
             if (!running) return
-            try { grabAndOcr() } catch (t: Throwable) { Log.w("AutoJoystick", "grab fail: ${t.message}") }
-            handler?.postDelayed(this, 900)
+            try { grabAndOcr() } catch (t: Throwable) { Log.w("AJ", "grab: ${t.message}") }
+            handler?.postDelayed(this, 750)
         }
     }
 
@@ -106,43 +93,49 @@ class CaptureService : Service() {
         val buffer = plane.buffer
         val rowPadding = rowStride - pixelStride * w
         val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
-        bmp.copyPixelsFromBuffer(buffer)
-        img.close()
-        val full = Bitmap.createBitmap(bmp, 0, 0, w, h)
-        bmp.recycle()
+        bmp.copyPixelsFromBuffer(buffer); img.close()
+        val full = Bitmap.createBitmap(bmp, 0, 0, w, h); bmp.recycle()
 
-        val rect = CoordinateCalibrator.coordRectFor(w, h)
-        if (rect.width() <= 0 || rect.height() <= 0) { full.recycle(); return }
-        var crop = Bitmap.createBitmap(full, rect.left, rect.top, rect.width(), rect.height())
+        // Use user-calibrated ROI rect when available, scaled from capture space to frame space.
+        val roi = effectiveRect(w, h)
+        if (roi.width() <= 4 || roi.height() <= 4) { full.recycle(); return }
+        val crop = Bitmap.createBitmap(full, roi.left, roi.top, roi.width(), roi.height())
         full.recycle()
 
-        // Upscale 4x + strong contrast so ML Kit can read small minimap text
-        val scaled = Bitmap.createScaledBitmap(crop, crop.width * 4, crop.height * 4, true)
+        val processed = ImageUtil.applyPreprocess(crop, prefs.contrast, prefs.brightness, prefs.invert)
         crop.recycle()
-        crop = boostContrast(scaled)
 
-        OcrEngine.recognizeCoord(crop) { coord ->
-            crop.recycle()
-            if (coord != null) {
-                JoystickController.onPositionUpdate(coord.first, coord.second)
+        // Always push processed crop preview + raw text to UI
+        OverlayBus.preview(processed)
+
+        OcrEngine.recognizeCoord(processed) { result ->
+            // processed bitmap already recycled via OverlayBus.preview path
+            PreviewCache.lastText = result.rawText.take(120)
+            OverlayBus.debugText(result.rawText.take(80))
+            if (result.coord != null) {
+                JoystickController.onPositionUpdate(result.coord.first, result.coord.second)
             }
         }
     }
 
-    private fun boostContrast(src: Bitmap): Bitmap {
-        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
-        val cm = ColorMatrix(
-            floatArrayOf(
-                2.4f, 0f,   0f,   0f, -180f,
-                0f,   2.4f, 0f,   0f, -180f,
-                0f,   0f,   2.4f, 0f, -180f,
-                0f,   0f,   0f,   1f, 0f
-            )
+    private fun effectiveRect(w: Int, h: Int): Rect {
+        val saved = prefs.coordROI ?: return defaultRect(w, h)
+        // ROI was set in screen pixels at calibration time; calibrate-view is full-screen so
+        // capture buffer and screen pixels already align 1:1.
+        return Rect(
+            saved.left.coerceIn(0, w - 1),
+            saved.top.coerceIn(0, h - 1),
+            saved.right.coerceIn(1, w),
+            saved.bottom.coerceIn(1, h)
         )
-        val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(cm) }
-        Canvas(out).drawBitmap(src, 0f, 0f, paint)
-        src.recycle()
-        return out
+    }
+
+    private fun defaultRect(w: Int, h: Int): Rect {
+        val l = (w * 0.80f).toInt()
+        val t = 0
+        val r = w
+        val b = (h * 0.27f).toInt()
+        return Rect(l, t, r, b)
     }
 
     override fun onDestroy() {
@@ -159,10 +152,10 @@ class CaptureService : Service() {
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             if (nm.getNotificationChannel("autojoy") == null) {
-                nm.createNotificationChannel(
-                    NotificationChannel("autojoy", "AutoJoystick", NotificationManager.IMPORTANCE_LOW)
-                )
+                nm.createNotificationChannel(NotificationChannel("autojoy", "AutoJoystick", NotificationManager.IMPORTANCE_LOW))
             }
         }
     }
 }
+
+object PreviewCache { var lastText: String = "" }
