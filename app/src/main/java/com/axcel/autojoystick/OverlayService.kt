@@ -271,162 +271,197 @@ class OverlayService : Service() {
         calibrateView = tv
     }
 
-    /** Full-screen layer with draggable+resizable rect over the coord text. */
+    /** Normalize a possibly-inverted rect (left<=right, top<=bottom). */
+    private fun normalizeRect(r: Rect?): Rect? {
+        if (r == null) return null
+        return Rect(minOf(r.left, r.right), minOf(r.top, r.bottom), maxOf(r.left, r.right), maxOf(r.top, r.bottom))
+    }
+
+    /** Full-screen layer with draggable+resizable rect over the coord text.
+     *  Crash-safe: every touch/draw path is guarded; saving only happens via SAVE button. */
     private fun showCoordCalLayer(status: TextView) {
-        if (calibrateView != null) try { wm.removeView(calibrateView) } catch (_: Throwable) {}
+        try {
+            if (calibrateView != null) try { wm.removeView(calibrateView) } catch (_: Throwable) {}
 
-        val dm = resources.displayMetrics
-        val saved = prefs.coordROI
-        val initial = saved ?: Rect(
-            (dm.widthPixels * 0.82f).toInt(),
-            (dm.heightPixels * 0.05f).toInt(),
-            (dm.widthPixels * 0.99f).toInt(),
-            (dm.heightPixels * 0.18f).toInt()
-        )
-        var rect = Rect(initial)
-        val corner = 56
+            val dm = resources.displayMetrics
+            val initial = normalizeRect(prefs.coordROI) ?: Rect(
+                (dm.widthPixels * 0.82f).toInt(),
+                (dm.heightPixels * 0.05f).toInt(),
+                (dm.widthPixels * 0.99f).toInt(),
+                (dm.heightPixels * 0.18f).toInt()
+            )
+            val corner = 56
 
-        val draw = CoordCalView(this) { newRect -> rect = newRect }
-        draw.rect.set(rect)
+            val draw = CoordCalView(this)
+            draw.rect.set(initial.left.toFloat(), initial.top.toFloat(), initial.right.toFloat(), initial.bottom.toFloat())
 
-        val clp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ); clp.gravity = Gravity.TOP or Gravity.START
+            val barH = 120
+            val bar = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                setBackgroundColor(0xEE101014.toInt())
+                gravity = Gravity.CENTER
+            }
+            val saveBtn = Button(this).apply { text = "SAVE BOX"; textSize = 13f }
+            val cancelBtn = Button(this).apply { text = "CLOSE"; textSize = 13f }
+            val hintTv = TextView(this).apply {
+                text = "Drag corners/box, then SAVE"
+                setTextColor(0xFFFFFFFF.toInt()); textSize = 11f; setPadding(16, 0, 0, 0)
+            }
+            bar.addView(saveBtn, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            bar.addView(cancelBtn, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            bar.addView(hintTv, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1.6f))
 
-        val wrap = object : FrameLayout(this) {
-            override fun onTouchEvent(e: MotionEvent): Boolean {
-                when (e.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        draw.onTouch(e.rawX.toInt(), e.rawY.toInt(), corner, MotionEvent.ACTION_DOWN)
-                        invalidate()
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        draw.onTouch(e.rawX.toInt(), e.rawY.toInt(), corner, MotionEvent.ACTION_MOVE)
-                        invalidate()
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val saved2 = draw.onTouch(e.rawX.toInt(), e.rawY.toInt(), corner, MotionEvent.ACTION_UP)
-                        if (saved2) {
-                            prefs.coordROI = Rect(
-                                draw.rect.left.toInt(),
-                                draw.rect.top.toInt(),
-                                draw.rect.right.toInt(),
-                                draw.rect.bottom.toInt()
-                            )
-                            status.text = "coord ROI saved ${draw.rect.left.toInt()},${draw.rect.top.toInt()} → ${draw.rect.right.toInt()},${draw.rect.bottom.toInt()}"
-                            try { wm.removeView(this) } catch (_: Throwable) {}
-                            calibrateView = null
-                            rootView?.let {
-                                it.findViewById<View>(R.id.ov_panel).visibility = View.VISIBLE
-                                it.findViewById<View>(R.id.ov_dot).visibility = View.GONE
-                            }
-                            Toast.makeText(this@OverlayService, "Coord ROI saved", Toast.LENGTH_SHORT).show()
-                        }
-                        invalidate()
+            val wrap = object : FrameLayout(this) {
+                override fun onTouchEvent(e: MotionEvent): Boolean {
+                    return try {
+                        draw.onTouch(e.rawX.toInt(), e.rawY.toInt(), corner, e.action)
+                        draw.invalidate()
+                        true
+                    } catch (t: Throwable) {
+                        android.util.Log.e("AJ", "coord cal touch", t)
+                        false
                     }
                 }
-                return true
+            }
+            wrap.setBackgroundColor(0x33000000)
+
+            fun close() {
+                try { wm.removeView(wrap) } catch (_: Throwable) {}
+                calibrateView = null
+                rootView?.let {
+                    it.findViewById<View>(R.id.ov_panel).visibility = View.VISIBLE
+                    it.findViewById<View>(R.id.ov_dot).visibility = View.GONE
+                }
+            }
+            saveBtn.setOnClickListener {
+                try {
+                    val r = normalizeRect(Rect(
+                        draw.rect.left.toInt(), draw.rect.top.toInt(),
+                        draw.rect.right.toInt(), draw.rect.bottom.toInt()
+                    ))
+                    if (r != null && r.width() >= 40 && r.height() >= 20) {
+                        prefs.coordROI = r
+                        status.text = "coord ROI saved ${r.left},${r.top} → ${r.right},${r.bottom}"
+                        Toast.makeText(this@OverlayService, "Coord ROI saved", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@OverlayService, "Box too small — drag a corner first", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (t: Throwable) { android.util.Log.e("AJ", "save ROI", t) }
+                close()
+            }
+            cancelBtn.setOnClickListener { close() }
+
+            wrap.addView(draw, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            wrap.addView(bar, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, barH, Gravity.BOTTOM))
+
+            val clp = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ); clp.gravity = Gravity.TOP or Gravity.START
+            try { wm.addView(wrap, clp) } catch (t: Throwable) {
+                android.util.Log.e("AJ", "coord cal addView", t); return
+            }
+            calibrateView = wrap
+        } catch (t: Throwable) {
+            android.util.Log.e("AJ", "showCoordCalLayer crash-safe", t)
+            rootView?.let {
+                it.findViewById<View>(R.id.ov_panel).visibility = View.VISIBLE
+                it.findViewById<View>(R.id.ov_dot).visibility = View.GONE
             }
         }
-        wrap.setBackgroundColor(0x33000000)
-        draw.layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        )
-        wrap.addView(draw)
-        try { wm.addView(wrap, clp) } catch (_: Throwable) {}
-        calibrateView = wrap
     }
 }
 
-class CoordCalView(ctx: Context, val setter: (Rect) -> Unit) : View(ctx) {
-    val rect: RectF = RectF()
-    private val stroke = Paint().apply { color = Color.RED; style = Paint.Style.STROKE; strokeWidth = 4f }
+class CoordCalView(ctx: Context) : View(ctx) {
+    val rect: RectF = RectF(100f, 100f, 400f, 220f)
+    private val stroke = Paint().apply { color = Color.RED; style = Paint.Style.STROKE; strokeWidth = 4f; isAntiAlias = true }
     private val fill = Paint().apply { color = 0x3300FF00 }
     private val cornerFill = Paint().apply { color = Color.YELLOW }
     private val cornerR = 28f
     private var mode = 0
     private var downX = 0f
     private var downY = 0f
-    private var saved = false
 
     init { setBackgroundColor(Color.TRANSPARENT); isFocusable = false; isClickable = false }
 
     override fun onDraw(c: Canvas) {
-        super.onDraw(c)
-        c.drawRect(rect, fill)
-        c.drawRect(rect, stroke)
-        // corners
-        c.drawRect(rect.left, rect.top, rect.left + cornerR, rect.top + cornerR, cornerFill)
-        c.drawRect(rect.right - cornerR, rect.top, rect.right, rect.top + cornerR, cornerFill)
-        c.drawRect(rect.left, rect.bottom - cornerR, rect.left + cornerR, rect.bottom, cornerFill)
-        c.drawRect(rect.right - cornerR, rect.bottom - cornerR, rect.right, rect.bottom, cornerFill)
+        try {
+            super.onDraw(c)
+            c.drawRect(rect, fill)
+            c.drawRect(rect, stroke)
+            c.drawRect(rect.left, rect.top, rect.left + cornerR, rect.top + cornerR, cornerFill)
+            c.drawRect(rect.right - cornerR, rect.top, rect.right, rect.top + cornerR, cornerFill)
+            c.drawRect(rect.left, rect.bottom - cornerR, rect.left + cornerR, rect.bottom, cornerFill)
+            c.drawRect(rect.right - cornerR, rect.bottom - cornerR, rect.right, rect.bottom, cornerFill)
+        } catch (t: Throwable) {
+            android.util.Log.e("AJ", "cal draw", t)
+        }
     }
 
+    /** mode: 1=TL 2=TR 3=BL 4=BR 5=move 0=idle. All paths guarded — nothing here may crash the app. */
     fun onTouch(x: Int, y: Int, maxDrag: Int, action: Int): Boolean {
-        when (action) {
-            MotionEvent.ACTION_DOWN -> {
-                downX = x.toFloat(); downY = y.toFloat()
-                mode = when {
-                    isInside(rect.left, rect.top, cornerR, x.toFloat(), y.toFloat()) -> 1
-                    isInside(rect.right - cornerR, rect.top, cornerR, x.toFloat(), y.toFloat()) -> 2
-                    isInside(rect.left, rect.bottom - cornerR, cornerR, x.toFloat(), y.toFloat()) -> 3
-                    isInside(rect.right - cornerR, rect.bottom - cornerR, cornerR, x.toFloat(), y.toFloat()) -> 4
-                    rect.contains(x.toFloat(), y.toFloat()) -> 5
-                    else -> 0
-                }
-            }
-            MotionEvent.ACTION_MOVE -> {
-                val nx = x.toFloat(); val ny = y.toFloat()
-                when (mode) {
-                    1 -> { rect.right = nx; rect.bottom = ny }
-                    2 -> { rect.left = nx; rect.bottom = ny }
-                    3 -> { rect.right = nx; rect.top = ny }
-                    4 -> { rect.left = nx; rect.top = ny }
-                    5 -> {
-                        rect.offset(nx - downX, ny - downY); downX = nx; downY = ny
-                        clamp()
+        try {
+            when (action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = x.toFloat(); downY = y.toFloat()
+                    mode = when {
+                        isInside(rect.left, rect.top, cornerR, x.toFloat(), y.toFloat()) -> 1
+                        isInside(rect.right - cornerR, rect.top, cornerR, x.toFloat(), y.toFloat()) -> 2
+                        isInside(rect.left, rect.bottom - cornerR, cornerR, x.toFloat(), y.toFloat()) -> 3
+                        isInside(rect.right - cornerR, rect.bottom - cornerR, cornerR, x.toFloat(), y.toFloat()) -> 4
+                        rect.contains(x.toFloat(), y.toFloat()) -> 5
+                        else -> 0
+                    }
+                    if (mode == 0) {
+                        // Tap outside: start a fresh box here and drag its bottom-right corner.
+                        rect.set(
+                            (x - maxDrag).toFloat(), (y - maxDrag / 2).toFloat(),
+                            (x + maxDrag).toFloat(), (y + maxDrag / 2).toFloat()
+                        )
+                        normalizeRect(); mode = 4
                     }
                 }
-                clamp()
-            }
-            MotionEvent.ACTION_UP -> {
-                if (mode == 0) {
-                    rect.set(
-                        (x - maxDrag).toFloat(), (y - maxDrag / 2).toFloat(),
-                        (x + maxDrag).toFloat(), (y + maxDrag / 2).toFloat()
-                    )
+                MotionEvent.ACTION_MOVE -> {
+                    val nx = x.toFloat(); val ny = y.toFloat()
+                    when (mode) {
+                        1 -> { rect.left = nx; rect.top = ny }
+                        2 -> { rect.right = nx; rect.top = ny }
+                        3 -> { rect.left = nx; rect.bottom = ny }
+                        4 -> { rect.right = nx; rect.bottom = ny }
+                        5 -> { rect.offset(nx - downX, ny - downY); downX = nx; downY = ny }
+                    }
+                    normalizeRect()
                     clamp()
-                    saved = true
-                    setter(Rect(rect.left.toInt(), rect.top.toInt(), rect.right.toInt(), rect.bottom.toInt()))
-                    return true
                 }
-                saved = true
-                setter(Rect(rect.left.toInt(), rect.top.toInt(), rect.right.toInt(), rect.bottom.toInt()))
-                return true
+                MotionEvent.ACTION_UP -> { mode = 0 }
             }
+        } catch (t: Throwable) {
+            android.util.Log.e("AJ", "cal touch", t)
         }
-        return false
+        return true
+    }
+
+    private fun normalizeRect() {
+        val l = minOf(rect.left, rect.right); val r = maxOf(rect.left, rect.right)
+        val t = minOf(rect.top, rect.bottom); val b = maxOf(rect.top, rect.bottom)
+        rect.set(l, t, r, b)
     }
 
     private fun clamp() {
         val w = width.toFloat(); val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return   // not measured yet — skip, never crash
         val minW = 60f; val minH = 30f
-        if (rect.width() < minW) {
-            if (mode == 1 || mode == 3) rect.right = rect.left + minW
-            else rect.left = rect.right - minW
-        }
-        if (rect.height() < minH) {
-            if (mode == 1 || mode == 2) rect.bottom = rect.top + minH
-            else rect.top = rect.bottom - minH
-        }
+        if (rect.width() < minW) rect.right = rect.left + minW
+        if (rect.height() < minH) rect.bottom = rect.top + minH
         if (rect.left < 0) { rect.right -= rect.left; rect.left = 0f }
         if (rect.top < 0) { rect.bottom -= rect.top; rect.top = 0f }
         if (rect.right > w) { rect.left -= (rect.right - w); rect.right = w }
         if (rect.bottom > h) { rect.top -= (rect.bottom - h); rect.bottom = h }
+        normalizeRect()
     }
 
     private fun isInside(cx: Float, cy: Float, r: Float, x: Float, y: Float): Boolean =
