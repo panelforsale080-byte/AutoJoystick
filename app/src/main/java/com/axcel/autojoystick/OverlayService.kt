@@ -80,6 +80,12 @@ class OverlayService : Service() {
     }
 
     private fun showOverlay() {
+        // Hard fail if overlay permission isn't granted yet (Android 6+ requirement).
+        if (Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(this)) {
+            android.util.Log.e("AJ", "overlay skipped: SYSTEM_ALERT_WINDOW not granted")
+            try { Toast.makeText(this, "Grant 'Display over other apps' first", Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+            stopSelf(); return
+        }
         val v = LayoutInflater.from(this).inflate(R.layout.overlay, null)
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -87,7 +93,7 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         )
-        lp.gravity = Gravity.TOP or Gravity.START; lp.x = 40; lp.y = 80
+        lp.gravity = Gravity.TOP or Gravity.START; lp.x = 40; lp.y = 200
 
         val panel = v.findViewById<View>(R.id.ov_panel)
         val dot = v.findViewById<View>(R.id.ov_dot)
@@ -198,14 +204,28 @@ class OverlayService : Service() {
             status.text = "stopped"
         }
 
-        try { wm.addView(v, lp) } catch (t: Throwable) {
-            android.util.Log.e("AJ", "addView failed", t)
+        try { wm.addView(v, lp) }
+        catch (t: Throwable) {
+            android.util.Log.e("AJ", "addView failed; retrying in 400ms", t)
+            // Retry once after a short delay in case system hadn't propagated the permission yet.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try { wm.addView(v, lp) }
+                catch (t2: Throwable) {
+                    android.util.Log.e("AJ", "addView retry failed", t2)
+                    try { Toast.makeText(this, "Overlay addView failed: ${t2.javaClass.simpleName}", Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+                    stopSelf(); return@postDelayed
+                }
+            }, 400)
         }
+        // Always show the full panel and only the panel (dot stays hidden until user minimizes).
+        try { dot.visibility = View.GONE; panel.visibility = View.VISIBLE } catch (_: Throwable) {}
         rootView = v
         OverlayBus.coordView = coordView
         OverlayBus.statusView = status
         OverlayBus.debugView = debug
         OverlayBus.previewView = preview
+        android.util.Log.i("AJ", "overlay panel added; panel visible=VISIBLE dot=GONE at x=${lp.x},y=${lp.y}")
+        try { Toast.makeText(this, "AutoJoystick overlay ready", Toast.LENGTH_SHORT).show() } catch (_: Throwable) {}
     }
 
     /** Drag-tap to record the joystick center. */
