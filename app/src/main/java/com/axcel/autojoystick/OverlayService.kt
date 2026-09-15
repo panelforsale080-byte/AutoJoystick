@@ -25,10 +25,10 @@ import android.widget.FrameLayout
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import com.google.android.material.slider.Slider
 
 class OverlayService : Service() {
 
@@ -108,13 +108,13 @@ class OverlayService : Service() {
         val btnCalJoy = v.findViewById<Button>(R.id.ov_cal_joy)
         val btnCalCoord = v.findViewById<Button>(R.id.ov_cal_coord)
         val status = v.findViewById<TextView>(R.id.ov_status)
-        val contrastSlider = v.findViewById<Slider>(R.id.ov_contrast)
-        val brightSlider = v.findViewById<Slider>(R.id.ov_brightness)
+        val contrastBar = v.findViewById<SeekBar>(R.id.ov_contrast)
+        val brightBar = v.findViewById<SeekBar>(R.id.ov_brightness)
         val invertSwitch = v.findViewById<Switch>(R.id.ov_invert)
 
         targetInput.setText(JoystickController.targetCoord)
-        contrastSlider.value = prefs.contrast.coerceIn(0.5f, 3.0f)
-        brightSlider.value = prefs.brightness.toFloat().coerceIn(-128f, 128f)
+        contrastBar.progress = ((prefs.contrast - 0.5f) * 100f).toInt().coerceIn(0, 250)
+        brightBar.progress = (prefs.brightness + 128).coerceIn(0, 256)
         invertSwitch.isChecked = prefs.invert
 
         title.setOnTouchListener(object : View.OnTouchListener {
@@ -166,14 +166,26 @@ class OverlayService : Service() {
             showCoordCalLayer(status)
         }
 
-        contrastSlider.addOnChangeListener { _, value, _ ->
-            prefs.contrast = value
-            status.text = "contrast=${"%.2f".format(value)}"
-        }
-        brightSlider.addOnChangeListener { _, value, _ ->
-            prefs.brightness = value.toInt()
-            status.text = "bright=${value.toInt()}"
-        }
+        contrastBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val value = 0.5f + p / 100f
+                prefs.contrast = value
+                status.text = "contrast=${"%.2f".format(value)}"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        brightBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val value = p - 128
+                prefs.brightness = value
+                status.text = "bright=$value"
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
         invertSwitch.setOnCheckedChangeListener { _, c ->
             prefs.invert = c
             status.text = "invert=$c"
