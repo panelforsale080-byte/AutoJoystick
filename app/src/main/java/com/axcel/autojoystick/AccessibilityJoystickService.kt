@@ -7,6 +7,7 @@ import android.graphics.Path
 import android.os.Build
 import android.util.DisplayMetrics
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 
 class AccessibilityJoystickService : AccessibilityService() {
 
@@ -16,6 +17,14 @@ class AccessibilityJoystickService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Not used; OCR pipeline drives automation.
+    }
+
+    override fun onInterrupt() {
+        // Required abstract method; nothing to clean up.
     }
 
     fun fireJoystickDrag(startX: Float, startY: Float, dx: Float, dy: Float, durationMs: Long) {
