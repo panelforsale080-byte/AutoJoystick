@@ -8,6 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -21,10 +25,6 @@ import android.os.IBinder
 import android.util.DisplayMetrics
 import android.view.WindowManager
 
-/**
- * Foreground service that owns the MediaProjection (required by Android 10+).
- * Grabs frames, OCRs the minimap coordinate region, feeds JoystickController.
- */
 class CaptureService : Service() {
 
     companion object {
@@ -104,11 +104,15 @@ class CaptureService : Service() {
         val full = Bitmap.createBitmap(bmp, 0, 0, w, h)
         bmp.recycle()
 
-        // Minimap region: top-right quadrant (where "Lorencia (131,116)" style coord renders)
         val rect = CoordinateCalibrator.coordRectFor(w, h)
         if (rect.width() <= 0 || rect.height() <= 0) { full.recycle(); return }
-        val crop = Bitmap.createBitmap(full, rect.left, rect.top, rect.width(), rect.height())
+        var crop = Bitmap.createBitmap(full, rect.left, rect.top, rect.width(), rect.height())
         full.recycle()
+
+        // Upscale 3x + contrast boost so ML Kit can read the small minimap text
+        val scaled = Bitmap.createScaledBitmap(crop, crop.width() * 3, crop.height() * 3, true)
+        crop.recycle()
+        crop = boostContrast(scaled)
 
         OcrEngine.recognizeCoord(crop) { coord ->
             crop.recycle()
@@ -118,6 +122,22 @@ class CaptureService : Service() {
                 JoystickController.onPositionUpdate(coord.first, coord.second)
             }
         }
+    }
+
+    private fun boostContrast(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val cm = ColorMatrix(
+            floatArrayOf(
+                1.6f, 0f, 0f, 0f, -60f,
+                0f, 1.6f, 0f, 0f, -60f,
+                0f, 0f, 1.6f, 0f, -60f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(cm) }
+        Canvas(out).drawBitmap(src, 0f, 0f, paint)
+        src.recycle()
+        return out
     }
 
     override fun onDestroy() {
