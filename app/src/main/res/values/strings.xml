@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">AutoJoystick</string>
+    <string name="accessibility_label">AutoJoystick (Joystick Auto-Drag)</string>
+    <string name="perm_overlay">Step 1 — Grant overlay permission</string>
+    <string name="perm_a11y">Step 2 — Enable AutoJoystick in Accessibility</string>
+    <string name="perm_capture">Step 3 — Start screen capture (MediaProjection)</string>
+    <string name="status_idle">Status: idle</string>
+    <string name="status_running">Status: running</string>
+    <string name="start_btn">START</string>
+    <string name="stop_btn">STOP</string>
+    <string name="calibrate_btn">Calibrate coordinate region</string>
+    <string name="overview">Detects minimap coord (e.g. 51,35) via OCR and drags joystick so the character walks to that coord. Manual calibration is required.</string>
+    <string name="last_coord">Last coord:</string>
+    <string name="target_coord">Target coord:</string>
+    <string name="joystick_center">Joystick center</string>
+</resources>
