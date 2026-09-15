@@ -9,7 +9,8 @@ object JoystickController {
     var joystickBaseY: Float = 0f
     var joystickRadius: Float = 180f
     var targetCoord: String = "51,35"
-    @Volatile var currentCoord: Pair<Int, Int>? = null
+    var currentCoord: String = ""
+    @Volatile var currentXY: Pair<Int, Int>? = null
     @Volatile var running: Boolean = false
 
     private val handler = Handler(Looper.getMainLooper())
@@ -27,24 +28,31 @@ object JoystickController {
         }
     }
 
+    fun setCurrent(s: String) {
+        currentCoord = s
+        currentXY = parseCoord(s)
+    }
+
     /**
-     * Map coords: X grows east (screen right), Y grows north.
-     * Screen Y grows downward → invert map-Y for the drag direction.
-     * Returns pixel offset from joystick center for FULL 360-degree aiming.
+     * Map coords: X grows east, Y grows north.
+     * Screen Y grows downward -> invert map-Y for the drag direction.
      */
-    fun computeDrag(current: Pair<Int, Int>, target: Pair<Int, Int>, maxMapDist: Int = 25): Pair<Float, Float> {
+    fun computeDrag(current: Pair<Int, Int>, target: Pair<Int, Int>, maxMapDist: Int = 30): Pair<Float, Float> {
         val dx = (target.first - current.first).toDouble()
         val dy = (target.second - current.second).toDouble()
         val n = Math.sqrt(dx * dx + dy * dy)
         if (n < 0.5) return 0f to 0f
-        val ang = Math.atan2(-dy, dx) // invert map-Y → screen direction
+        val ang = Math.atan2(-dy, dx)
         val ratio = (n / maxMapDist).coerceIn(0.0, 1.0)
-        // gentle push when very close so we don't overshoot
-        val r = joystickRadius * (0.35f + 0.65f * ratio.toFloat())
+        val r = joystickRadius * (0.4f + 0.6f * ratio.toFloat())
         return (Math.cos(ang) * r).toFloat() to (Math.sin(ang) * r).toFloat()
     }
 
     fun onPositionUpdate(x: Int, y: Int) {
+        // OCR-derived update overrides whatever the user typed
+        currentXY = x to y
+        currentCoord = "$x,$y"
+        OverlayBus.push("$x,$y")
         val t = parseCoord(targetCoord) ?: return
         val dist = Math.hypot((t.first - x).toDouble(), (t.second - y).toDouble())
         if (dist <= 1.5 && running) {
@@ -54,7 +62,6 @@ object JoystickController {
         }
     }
 
-    /** End the chained gesture: lift the finger back toward center. */
     fun releaseStroke() {
         val svc = AccessibilityJoystickService.instance ?: return
         if (strokeActive) {
@@ -63,21 +70,30 @@ object JoystickController {
         }
     }
 
-    /** Main loop: OCR position → rotate joystick toward target. */
+    /** Main loop: NEVER block. If user typed (or OCR gave) current coord, drag toward target.
+     *  Otherwise walk in the straight direction (current->target) holding toward target. */
     fun tick(status: TextView?) {
         handler.removeCallbacksAndMessages(null)
-        val target = parseCoord(targetCoord) ?: return
+        val target = parseCoord(targetCoord) ?: run {
+            OverlayBus.status("invalid target $targetCoord"); return
+        }
         handler.post(object : Runnable {
             override fun run() {
                 if (!running) { releaseStroke(); return }
                 val svc = AccessibilityJoystickService.instance
                 if (svc == null) { OverlayBus.status("enable accessibility first"); running = false; releaseStroke(); return }
-                if (joystickBaseX <= 0f) { OverlayBus.status("set joystick center first (CAL)"); running = false; return }
+                if (joystickBaseX <= 0f) { OverlayBus.status("press CAL then tap joystick center"); running = false; return }
 
-                val cur = currentCoord
+                val cur = currentXY
                 if (cur == null) {
-                    // NO blind drag — wait for a real OCR reading so we never walk the wrong way
-                    OverlayBus.status("reading coord… (check minimap visible)")
+                    // No current coord available — drag blindly toward target angle, but keep moving.
+                    // We treat "current" as (target.x - 1, target.y) to force an east-direction initial drag
+                    // unless we have any other hint. Most useful default: head = north always works as probe.
+                    OverlayBus.status("no current coord — dragging straight (set current to fix)")
+                    val (ox, oy) = 0f to -joystickRadius * 0.7f // north on map = up on screen = -y
+                    val ex = joystickBaseX + ox
+                    val ey = joystickBaseY + oy
+                    sendChain(svc, ex, ey)
                     handler.postDelayed(this, 650)
                     return
                 }
@@ -93,21 +109,20 @@ object JoystickController {
                 val (ox, oy) = computeDrag(cur, target)
                 val ex = joystickBaseX + ox
                 val ey = joystickBaseY + oy
-
-                if (!strokeActive) {
-                    // start gesture at joystick center, drag out to offset, finger stays down
-                    svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 620, true)
-                    strokeActive = true
-                } else {
-                    // chain from last endpoint to new endpoint → smooth rotation
-                    svc.fireSegment(lastEndX, lastEndY, ex, ey, 620, true)
-                }
-                lastEndX = ex; lastEndY = ey
-
-                OverlayBus.push("${cur.first},${cur.second}")
+                sendChain(svc, ex, ey)
                 OverlayBus.status("→ ${target.first},${target.second} | now ${cur.first},${cur.second} | d=%.1f".format(dist))
                 handler.postDelayed(this, 650)
             }
         })
+    }
+
+    private fun sendChain(svc: AccessibilityJoystickService, ex: Float, ey: Float) {
+        if (!strokeActive) {
+            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 620, true)
+            strokeActive = true
+        } else {
+            svc.fireSegment(lastEndX, lastEndY, ex, ey, 620, true)
+        }
+        lastEndX = ex; lastEndY = ey
     }
 }

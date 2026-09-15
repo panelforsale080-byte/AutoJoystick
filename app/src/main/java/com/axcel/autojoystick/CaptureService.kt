@@ -23,6 +23,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 
 class CaptureService : Service() {
@@ -44,48 +45,54 @@ class CaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        ensureChannel()
-        val notif = Notification.Builder(this, "autojoy")
-            .setContentTitle("AutoJoystick capture")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .build()
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(2, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(2, notif)
+        try {
+            ensureChannel()
+            val notif = Notification.Builder(this, "autojoy")
+                .setContentTitle("AutoJoystick capture")
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .build()
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(2, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } else {
+                startForeground(2, notif)
+            }
+
+            val code = pendingResultCode
+            val data = pendingData
+            if (data == null || code == 0) { stopSelf(); return START_NOT_STICKY }
+
+            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projection = mpm.getMediaProjection(code, data)
+
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm)
+            screenW = dm.widthPixels; screenH = dm.heightPixels
+
+            reader = ImageReader.newInstance(screenW, screenH, PixelFormat.RGBA_8888, 2)
+            vdisp = projection?.createVirtualDisplay(
+                "ajcap", screenW, screenH, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader!!.surface, null, null
+            )
+
+            running = true
+            thread = HandlerThread("ajcap").also { it.start() }
+            handler = Handler(thread!!.looper)
+            handler?.post(captureLoop)
+        } catch (t: Throwable) {
+            Log.e("AutoJoystick", "CaptureService start crash", t)
+            stopSelf()
+            return START_NOT_STICKY
         }
-
-        val code = pendingResultCode
-        val data = pendingData
-        if (data == null || code == 0) { stopSelf(); return START_NOT_STICKY }
-
-        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        projection = mpm.getMediaProjection(code, data)
-
-        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val dm = DisplayMetrics()
-        @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm)
-        screenW = dm.widthPixels; screenH = dm.heightPixels
-
-        reader = ImageReader.newInstance(screenW, screenH, PixelFormat.RGBA_8888, 2)
-        vdisp = projection?.createVirtualDisplay(
-            "ajcap", screenW, screenH, dm.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader!!.surface, null, null
-        )
-
-        running = true
-        thread = HandlerThread("ajcap").also { it.start() }
-        handler = Handler(thread!!.looper)
-        handler?.post(captureLoop)
         return START_STICKY
     }
 
     private val captureLoop = object : Runnable {
         override fun run() {
             if (!running) return
-            try { grabAndOcr() } catch (_: Throwable) {}
-            handler?.postDelayed(this, 700)
+            try { grabAndOcr() } catch (t: Throwable) { Log.w("AutoJoystick", "grab fail: ${t.message}") }
+            handler?.postDelayed(this, 900)
         }
     }
 
@@ -109,16 +116,14 @@ class CaptureService : Service() {
         var crop = Bitmap.createBitmap(full, rect.left, rect.top, rect.width(), rect.height())
         full.recycle()
 
-        // Upscale 3x + contrast boost so ML Kit can read the small minimap text
-        val scaled = Bitmap.createScaledBitmap(crop, crop.width * 3, crop.height * 3, true)
+        // Upscale 4x + strong contrast so ML Kit can read small minimap text
+        val scaled = Bitmap.createScaledBitmap(crop, crop.width * 4, crop.height * 4, true)
         crop.recycle()
         crop = boostContrast(scaled)
 
         OcrEngine.recognizeCoord(crop) { coord ->
             crop.recycle()
             if (coord != null) {
-                JoystickController.currentCoord = coord
-                OverlayBus.push("${coord.first},${coord.second}")
                 JoystickController.onPositionUpdate(coord.first, coord.second)
             }
         }
@@ -128,10 +133,10 @@ class CaptureService : Service() {
         val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
         val cm = ColorMatrix(
             floatArrayOf(
-                1.6f, 0f, 0f, 0f, -60f,
-                0f, 1.6f, 0f, 0f, -60f,
-                0f, 0f, 1.6f, 0f, -60f,
-                0f, 0f, 0f, 1f, 0f
+                2.4f, 0f,   0f,   0f, -180f,
+                0f,   2.4f, 0f,   0f, -180f,
+                0f,   0f,   2.4f, 0f, -180f,
+                0f,   0f,   0f,   1f, 0f
             )
         )
         val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(cm) }

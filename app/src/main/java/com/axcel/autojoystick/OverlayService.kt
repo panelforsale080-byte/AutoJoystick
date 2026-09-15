@@ -22,18 +22,22 @@ class OverlayService : Service() {
 
     private lateinit var wm: WindowManager
     private var rootView: View? = null
-    private var collapsed = false
     private var calibrateView: View? = null
 
     override fun onCreate() {
         super.onCreate()
-        ensureChannel()
-        startForeground(1, Notification.Builder(this, "autojoy")
-            .setContentTitle("AutoJoystick running")
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .build())
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        showOverlay()
+        try {
+            ensureChannel()
+            startForeground(1, Notification.Builder(this, "autojoy")
+                .setContentTitle("AutoJoystick running")
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .build())
+            wm = getSystemService(WINDOW_SERVICE) as WindowManager
+            showOverlay()
+        } catch (t: Throwable) {
+            android.util.Log.e("AutoJoystick", "overlay onCreate crash", t)
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -42,7 +46,7 @@ class OverlayService : Service() {
         try { rootView?.let { wm.removeView(it) } } catch (_: Throwable) {}
         try { calibrateView?.let { wm.removeView(it) } } catch (_: Throwable) {}
         rootView = null; calibrateView = null
-        JoystickController.running = false
+        try { JoystickController.running = false } catch (_: Throwable) {}
         super.onDestroy()
     }
 
@@ -77,12 +81,14 @@ class OverlayService : Service() {
         val minimize = v.findViewById<TextView>(R.id.ov_minimize)
         val coordView = v.findViewById<TextView>(R.id.ov_coord)
         val targetInput = v.findViewById<EditText>(R.id.ov_target)
+        val currentInput = v.findViewById<EditText>(R.id.ov_current)
         val btnStart = v.findViewById<Button>(R.id.ov_start)
         val btnStop = v.findViewById<Button>(R.id.ov_stop)
         val btnCal = v.findViewById<Button>(R.id.ov_calibrate)
         val status = v.findViewById<TextView>(R.id.ov_status)
 
         targetInput.setText(JoystickController.targetCoord)
+        currentInput.setText(JoystickController.currentCoord)
 
         title.setOnTouchListener(object : View.OnTouchListener {
             var sx = 0; var sy = 0; var px = 0f; var py = 0f
@@ -100,7 +106,6 @@ class OverlayService : Service() {
         })
 
         fun setCollapsed(c: Boolean) {
-            collapsed = c
             panel.visibility = if (c) View.GONE else View.VISIBLE
             dot.visibility = if (c) View.VISIBLE else View.GONE
             try { wm.updateViewLayout(v, lp) } catch (_: Throwable) {}
@@ -124,7 +129,7 @@ class OverlayService : Service() {
         })
 
         btnCal.setOnClickListener {
-            status.text = "tap the joystick CENTER on screen…"
+            status.text = "tap joystick CENTER on screen…"
             setCollapsed(true)
             showCalibrationLayer(status)
         }
@@ -133,34 +138,47 @@ class OverlayService : Service() {
             val t = targetInput.text.toString().trim().ifBlank { "51,35" }
             val parsed = JoystickController.parseCoord(t)
             if (parsed == null) {
-                Toast.makeText(this, "Invalid coord: $t", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Invalid target: $t", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             if (JoystickController.joystickBaseX <= 0f) {
-                status.text = "set joystick center first (CAL button)"
+                status.text = "press CAL first to set joystick center"
+                Toast.makeText(this, "Press CAL to tap the joystick center first", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             if (AccessibilityJoystickService.instance == null) {
-                status.text = "enable accessibility first"
+                status.text = "enable accessibility AutoJoystick first"
+                Toast.makeText(this, "Enable AutoJoystick in Accessibility settings first", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
+            // apply typed current
+            val curText = currentInput.text.toString().trim()
+            if (curText.isNotBlank()) JoystickController.setCurrent(curText)
+
+            // release any previous stroke before starting a new run
+            try { JoystickController.releaseStroke() } catch (_: Throwable) {}
+
             JoystickController.targetCoord = t
             JoystickController.running = true
             JoystickController.tick(status)
-            status.text = "running → $t"
+            status.text = "running → $t (cur ${JoystickController.currentCoord.ifBlank { "?" }})"
         }
+
         btnStop.setOnClickListener {
             JoystickController.running = false
+            JoystickController.releaseStroke()
             status.text = "stopped"
         }
 
-        wm.addView(v, lp)
+        try { wm.addView(v, lp) } catch (t: Throwable) {
+            android.util.Log.e("AutoJoystick", "addView failed", t)
+            Toast.makeText(this, "Overlay addView failed: ${t.message}", Toast.LENGTH_LONG).show()
+        }
         rootView = v
         OverlayBus.coordView = coordView
         OverlayBus.statusView = status
     }
 
-    /** Full-screen transparent tap layer: one tap = joystick center saved. */
     private fun showCalibrationLayer(status: TextView) {
         if (calibrateView != null) return
         val tv = TextView(this).apply {
@@ -186,15 +204,16 @@ class OverlayService : Service() {
                 status.text = "joystick center = ${e.rawX.toInt()},${e.rawY.toInt()}"
                 try { wm.removeView(tv) } catch (_: Throwable) {}
                 calibrateView = null
-                // expand panel back
-                rootView?.let {
-                    it.findViewById<View>(R.id.ov_panel).visibility = View.VISIBLE
-                    it.findViewById<View>(R.id.ov_dot).visibility = View.GONE
-                }
+                try {
+                    rootView?.let {
+                        it.findViewById<View>(R.id.ov_panel).visibility = View.VISIBLE
+                        it.findViewById<View>(R.id.ov_dot).visibility = View.GONE
+                    }
+                } catch (_: Throwable) {}
             }
             true
         }
-        wm.addView(tv, clp)
+        try { wm.addView(tv, clp) } catch (_: Throwable) {}
         calibrateView = tv
     }
 }

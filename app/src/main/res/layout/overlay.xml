@@ -57,12 +57,35 @@
             android:text="coord: —"
             android:textColor="#7AE582"/>
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="target coord"
+            android:textColor="#A9A9B7"
+            android:textSize="11sp"/>
         <EditText
             android:id="@+id/ov_target"
             android:layout_width="match_parent"
             android:layout_height="40dp"
+            android:hint="e.g. 51,35"
+            android:inputType="text"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#6F6F7A"
+            android:textSize="14sp"/>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:hint="target coord e.g. 51,35"
+            android:text="current coord (type if OCR fails)"
+            android:textColor="#A9A9B7"
+            android:textSize="11sp"/>
+        <EditText
+            android:id="@+id/ov_current"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:hint="e.g. 13,34"
             android:inputType="text"
             android:textColor="#FFFFFF"
             android:textColorHint="#6F6F7A"
