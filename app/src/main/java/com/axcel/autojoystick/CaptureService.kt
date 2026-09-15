@@ -110,7 +110,7 @@ class CaptureService : Service() {
         full.recycle()
 
         // Upscale 3x + contrast boost so ML Kit can read the small minimap text
-        val scaled = Bitmap.createScaledBitmap(crop, crop.width() * 3, crop.height() * 3, true)
+        val scaled = Bitmap.createScaledBitmap(crop, crop.width * 3, crop.height * 3, true)
         crop.recycle()
         crop = boostContrast(scaled)
 
