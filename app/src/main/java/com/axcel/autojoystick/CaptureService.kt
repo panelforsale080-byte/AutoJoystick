@@ -119,14 +119,14 @@ class CaptureService : Service() {
     }
 
     private fun effectiveRect(w: Int, h: Int): Rect {
-        val saved = prefs.coordROI ?: return defaultRect(w, h)
-        // ROI was set in screen pixels at calibration time; calibrate-view is full-screen so
-        // capture buffer and screen pixels already align 1:1.
+        // ROI is stored as screen fractions — convert to current capture frame pixels.
+        // This keeps the box locked on the same screen area after rotation.
+        val f = prefs.coordRoiF ?: return defaultRect(w, h)
         return Rect(
-            saved.left.coerceIn(0, w - 1),
-            saved.top.coerceIn(0, h - 1),
-            saved.right.coerceIn(1, w),
-            saved.bottom.coerceIn(1, h)
+            (f.left * w).toInt().coerceIn(0, w - 1),
+            (f.top * h).toInt().coerceIn(0, h - 1),
+            (f.right * w).toInt().coerceIn(1, w),
+            (f.bottom * h).toInt().coerceIn(1, h)
         )
     }
 

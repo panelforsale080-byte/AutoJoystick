@@ -24,8 +24,7 @@ class MainActivity : AppCompatActivity() {
             setContentView(R.layout.activity_main)
             logs = findViewById(R.id.logs)
             prefs = PreferenceStore(this)
-            JoystickController.joystickBaseX = prefs.joystickCenterX
-            JoystickController.joystickBaseY = prefs.joystickCenterY
+            // Joystick center is restored from fractions inside OverlayService (screen-size aware).
         } catch (t: Throwable) {
             Log.e("AJ", "init crash", t)
             try { Toast.makeText(this, "Init: ${t.message}", Toast.LENGTH_LONG).show() } catch (_: Throwable) {}

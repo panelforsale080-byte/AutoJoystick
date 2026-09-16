@@ -41,6 +41,7 @@ class OverlayService : Service() {
         super.onCreate()
         try {
             prefs = PreferenceStore(this)
+            applySavedJoystick()
             ensureChannel()
             val notif = Notification.Builder(this, "autojoy")
                 .setContentTitle("AutoJoystick running")
@@ -69,6 +70,15 @@ class OverlayService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun applySavedJoystick() {
+        val fx = prefs.joystickCenterFracX; val fy = prefs.joystickCenterFracY
+        if (fx >= 0f && fy >= 0f) {
+            val dm = resources.displayMetrics
+            JoystickController.joystickBaseX = fx * dm.widthPixels
+            JoystickController.joystickBaseY = fy * dm.heightPixels
+        }
+    }
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
@@ -254,9 +264,11 @@ class OverlayService : Service() {
         ); clp.gravity = Gravity.TOP or Gravity.START
         tv.setOnTouchListener { _, e ->
             if (e.action == MotionEvent.ACTION_DOWN) {
+                val dmx = resources.displayMetrics
                 JoystickController.joystickBaseX = e.rawX
                 JoystickController.joystickBaseY = e.rawY
-                prefs.joystickCenterX = e.rawX; prefs.joystickCenterY = e.rawY
+                prefs.joystickCenterFracX = e.rawX / dmx.widthPixels
+                prefs.joystickCenterFracY = e.rawY / dmx.heightPixels
                 status.text = "joystick center = ${e.rawX.toInt()},${e.rawY.toInt()}"
                 try { wm.removeView(tv) } catch (_: Throwable) {}
                 calibrateView = null
@@ -284,11 +296,14 @@ class OverlayService : Service() {
             if (calibrateView != null) try { wm.removeView(calibrateView) } catch (_: Throwable) {}
 
             val dm = resources.displayMetrics
-            val initial = normalizeRect(prefs.coordROI) ?: Rect(
-                (dm.widthPixels * 0.82f).toInt(),
-                (dm.heightPixels * 0.05f).toInt(),
+            val sw = dm.widthPixels.toFloat(); val sh = dm.heightPixels.toFloat()
+            val initial: Rect = (prefs.coordRoiF?.let {
+                Rect((it.left*sw).toInt(), (it.top*sh).toInt(), (it.right*sw).toInt(), (it.bottom*sh).toInt())
+            }?.let { normalizeRect(it) }) ?: Rect(
+                (dm.widthPixels * 0.86f).toInt(),
+                (dm.heightPixels * 0.15f).toInt(),
                 (dm.widthPixels * 0.99f).toInt(),
-                (dm.heightPixels * 0.18f).toInt()
+                (dm.heightPixels * 0.21f).toInt()
             )
             val corner = 56
 
@@ -340,7 +355,10 @@ class OverlayService : Service() {
                         draw.rect.right.toInt(), draw.rect.bottom.toInt()
                     ))
                     if (r != null && r.width() >= 40 && r.height() >= 20) {
-                        prefs.coordROI = r
+                        // Save as fractions so the box lands in the same spot after rotation.
+                        prefs.coordRoiF = android.graphics.RectF(
+                            r.left / sw, r.top / sh, r.right / sw, r.bottom / sh)
+                        prefs.roiOrientation = resources.configuration.orientation
                         status.text = "coord ROI saved ${r.left},${r.top} → ${r.right},${r.bottom}"
                         Toast.makeText(this@OverlayService, "Coord ROI saved", Toast.LENGTH_SHORT).show()
                     } else {
