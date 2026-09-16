@@ -18,6 +18,11 @@ object JoystickController {
     private var lastEndX = 0f
     private var lastEndY = 0f
 
+    // --- stuck-on-wall detection state ---
+    private var lastPos: Pair<Int, Int>? = null
+    private var stillTicks = 0
+    private var unstickDir = 1
+
     fun parseCoord(s: String): Pair<Int, Int>? {
         val m = coordRegex.find(s) ?: return null
         return m.groupValues[1].toIntOrNull()?.let { x ->
@@ -58,6 +63,7 @@ object JoystickController {
 
     fun tick() {
         handler.removeCallbacksAndMessages(null)
+        stillTicks = 0; lastPos = null   // fresh stuck-detection state each run
         val target = parseCoord(targetCoord) ?: run {
             OverlayBus.status("invalid target $targetCoord"); return
         }
@@ -86,7 +92,30 @@ object JoystickController {
                     OverlayBus.status("ARRIVED at ${target.first},${target.second}")
                     return
                 }
+
+                // --- stuck detection: same coord for 4+ consecutive ticks while pushing ---
+                val lp = lastPos
+                if (lp != null && Math.hypot((cur.first - lp.first).toDouble(), (cur.second - lp.second).toDouble()) < 1.0) {
+                    stillTicks++
+                } else {
+                    stillTicks = 0
+                }
+                lastPos = cur
+
                 val (ox, oy) = computeDrag(cur, target)
+                if (stillTicks >= 4) {
+                    // Wall-stuck: drag PERPENDICULAR (±90°) to slide along the wall,
+                    // alternating side each episode, then resume normal pathing next tick.
+                    stillTicks = 0
+                    unstickDir = -unstickDir
+                    val px = -oy * unstickDir
+                    val py = ox * unstickDir
+                    sendChain(svc, joystickBaseX + px, joystickBaseY + py)
+                    OverlayBus.status("STUCK — sidestep ${if (unstickDir > 0) "left" else "right"} | now ${cur.first},${cur.second} | d=%.1f".format(dist))
+                    handler.postDelayed(this, 900)
+                    return
+                }
+
                 val ex = joystickBaseX + ox
                 val ey = joystickBaseY + oy
                 sendChain(svc, ex, ey)
