@@ -23,6 +23,19 @@ object JoystickController {
     private var stillTicks = 0
     private var unstickDir = 1
 
+    /** System cancelled a continued gesture — next drag must start fresh from base. */
+    fun strokeBroken() { strokeActive = false }
+
+    /** One-shot diagnostic: drag right from base for 500ms. Proves base+a11y+gesture in one tap. */
+    fun testDrag() {
+        val svc = AccessibilityJoystickService.instance
+        if (svc == null) { OverlayBus.status("TEST: accessibility OFF"); return }
+        if (joystickBaseX <= 0f) { OverlayBus.status("TEST: press CAL JOY first"); return }
+        strokeActive = false
+        svc.fireSegment(joystickBaseX, joystickBaseY, joystickBaseX + joystickRadius * 0.8f, joystickBaseY, 500, false)
+        OverlayBus.status("TEST drag → right from ${joystickBaseX.toInt()},${joystickBaseY.toInt()}")
+    }
+
     fun parseCoord(s: String): Pair<Int, Int>? {
         val m = coordRegex.find(s) ?: return null
         return m.groupValues[1].toIntOrNull()?.let { x ->
@@ -103,7 +116,7 @@ object JoystickController {
                 lastPos = cur
 
                 val (ox, oy) = computeDrag(cur, target)
-                if (stillTicks >= 4) {
+                if (stillTicks >= 6 && dist > 2.5 && strokeActive) {
                     // Wall-stuck: drag PERPENDICULAR (±90°) to slide along the wall,
                     // alternating side each episode, then resume normal pathing next tick.
                     stillTicks = 0
@@ -127,10 +140,10 @@ object JoystickController {
 
     private fun sendChain(svc: AccessibilityJoystickService, ex: Float, ey: Float) {
         if (!strokeActive) {
-            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 620, true)
+            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 500, true)
             strokeActive = true
         } else {
-            svc.fireSegment(lastEndX, lastEndY, ex, ey, 620, true)
+            svc.fireSegment(lastEndX, lastEndY, ex, ey, 500, true)
         }
         lastEndX = ex; lastEndY = ey
     }

@@ -171,6 +171,7 @@ class OverlayService : Service() {
             }
         })
 
+        v.findViewById<Button>(R.id.ov_test)?.setOnClickListener { JoystickController.testDrag() }
         btnCalJoy.setOnClickListener {
             status.text = "tap JOIN-STICK CENTER on screen…"
             setCollapsed(true)

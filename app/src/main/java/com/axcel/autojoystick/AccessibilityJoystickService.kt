@@ -48,6 +48,15 @@ class AccessibilityJoystickService : AccessibilityService() {
             GestureDescription.StrokeDescription(p, 0, durationMs)
         }
         val g = GestureDescription.Builder().addStroke(stroke).build()
-        dispatchGesture(g, null, null)
+        val ok = dispatchGesture(g, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                OverlayBus.debugText("gesture completed")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                JoystickController.strokeBroken()
+                OverlayBus.debugText("gesture CANCELLED by system")
+            }
+        }, null)
+        if (!ok) OverlayBus.debugText("dispatch REJECTED (busy or no a11y)")
     }
 }
