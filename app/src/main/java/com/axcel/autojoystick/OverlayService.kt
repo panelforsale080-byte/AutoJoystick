@@ -71,8 +71,14 @@ class OverlayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applySavedJoystick()
+    }
+
     private fun applySavedJoystick() {
-        val fx = prefs.joystickCenterFracX; val fy = prefs.joystickCenterFracY
+        val o = resources.configuration.orientation
+        val fx = prefs.joystickFracX(o); val fy = prefs.joystickFracY(o)
         if (fx >= 0f && fy >= 0f) {
             val dm = resources.displayMetrics
             JoystickController.joystickBaseX = fx * dm.widthPixels
@@ -267,8 +273,8 @@ class OverlayService : Service() {
                 val dmx = resources.displayMetrics
                 JoystickController.joystickBaseX = e.rawX
                 JoystickController.joystickBaseY = e.rawY
-                prefs.joystickCenterFracX = e.rawX / dmx.widthPixels
-                prefs.joystickCenterFracY = e.rawY / dmx.heightPixels
+                prefs.setJoystickFrac(resources.configuration.orientation,
+                    e.rawX / dmx.widthPixels, e.rawY / dmx.heightPixels)
                 status.text = "joystick center = ${e.rawX.toInt()},${e.rawY.toInt()}"
                 try { wm.removeView(tv) } catch (_: Throwable) {}
                 calibrateView = null
@@ -297,7 +303,8 @@ class OverlayService : Service() {
 
             val dm = resources.displayMetrics
             val sw = dm.widthPixels.toFloat(); val sh = dm.heightPixels.toFloat()
-            val initial: Rect = (prefs.coordRoiF?.let {
+            val orient = resources.configuration.orientation
+            val initial: Rect = (prefs.coordRoi(orient)?.let {
                 Rect((it.left*sw).toInt(), (it.top*sh).toInt(), (it.right*sw).toInt(), (it.bottom*sh).toInt())
             }?.let { normalizeRect(it) }) ?: Rect(
                 (dm.widthPixels * 0.86f).toInt(),
@@ -355,10 +362,9 @@ class OverlayService : Service() {
                         draw.rect.right.toInt(), draw.rect.bottom.toInt()
                     ))
                     if (r != null && r.width() >= 40 && r.height() >= 20) {
-                        // Save as fractions so the box lands in the same spot after rotation.
-                        prefs.coordRoiF = android.graphics.RectF(
-                            r.left / sw, r.top / sh, r.right / sw, r.bottom / sh)
-                        prefs.roiOrientation = resources.configuration.orientation
+                        // Save per-orientation fractions — portrait and landscape keep separate boxes.
+                        prefs.setCoordRoi(orient, android.graphics.RectF(
+                            r.left / sw, r.top / sh, r.right / sw, r.bottom / sh))
                         status.text = "coord ROI saved ${r.left},${r.top} → ${r.right},${r.bottom}"
                         Toast.makeText(this@OverlayService, "Coord ROI saved", Toast.LENGTH_SHORT).show()
                     } else {

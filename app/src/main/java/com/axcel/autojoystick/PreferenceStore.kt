@@ -1,35 +1,38 @@
 package com.axcel.autojoystick
 
 import android.content.Context
-import android.graphics.Rect
+import android.content.res.Configuration
 import android.graphics.RectF
 
 class PreferenceStore(ctx: Context) {
     private val p = ctx.applicationContext.getSharedPreferences("aj_prefs", Context.MODE_PRIVATE)
 
-    // Joystick center saved as screen fractions — survives orientation changes.
-    var joystickCenterFracX: Float
-        get() = p.getFloat("jx", -1f)
-        set(v) { p.edit().putFloat("jx", v).apply() }
-    var joystickCenterFracY: Float
-        get() = p.getFloat("jy", -1f)
-        set(v) { p.edit().putFloat("jy", v).apply() }
+    private fun k(base: String, orient: Int) =
+        if (orient == Configuration.ORIENTATION_LANDSCAPE) "${base}_l" else "${base}_p"
 
-    // Coord ROI saved as screen fractions (0..1) — same box position in portrait & landscape.
-    var coordRoiF: RectF?
-        get() {
-            val l = p.getFloat("cl", -1f); if (l < 0f) return null
-            return RectF(l, p.getFloat("ct", 0f), p.getFloat("cr", 0f), p.getFloat("cb", 0f))
-        }
-        set(v) {
-            if (v == null) p.edit().remove("cl").remove("ct").remove("cr").remove("cb").apply()
-            else p.edit().putFloat("cl", v.left).putFloat("ct", v.top)
-                .putFloat("cr", v.right).putFloat("cb", v.bottom).apply()
-        }
-    var roiOrientation: Int  // 1=portrait, 2=landscape when calibrated
-        get() = p.getInt("roi_orient", 0)
-        set(v) { p.edit().putInt("roi_orient", v).apply() }
+    // --- Joystick center (per-orientation, stored as screen fractions 0..1) ---
+    fun joystickFracX(orient: Int): Float = p.getFloat(k("jx", orient), -1f)
+    fun joystickFracY(orient: Int): Float = p.getFloat(k("jy", orient), -1f)
+    fun setJoystickFrac(orient: Int, x: Float, y: Float) {
+        p.edit().putFloat(k("jx", orient), x).putFloat(k("jy", orient), y).apply()
+    }
 
+    // --- Coord ROI (per-orientation, stored as screen fractions 0..1) ---
+    fun coordRoi(orient: Int): RectF? {
+        val l = p.getFloat(k("cl", orient), -1f); if (l < 0f) return null
+        return RectF(l, p.getFloat(k("ct", orient), 0f),
+            p.getFloat(k("cr", orient), 0f), p.getFloat(k("cb", orient), 0f))
+    }
+    fun setCoordRoi(orient: Int, v: RectF?) {
+        if (v == null) p.edit()
+            .remove(k("cl", orient)).remove(k("ct", orient))
+            .remove(k("cr", orient)).remove(k("cb", orient)).apply()
+        else p.edit()
+            .putFloat(k("cl", orient), v.left).putFloat(k("ct", orient), v.top)
+            .putFloat(k("cr", orient), v.right).putFloat(k("cb", orient), v.bottom).apply()
+    }
+
+    // --- OCR preprocessing (global, orientation-independent) ---
     var contrast: Float
         get() = p.getFloat("contrast", 1.8f)
         set(v) { p.edit().putFloat("contrast", v).apply() }

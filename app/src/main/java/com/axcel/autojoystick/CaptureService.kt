@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
@@ -119,9 +120,8 @@ class CaptureService : Service() {
     }
 
     private fun effectiveRect(w: Int, h: Int): Rect {
-        // ROI is stored as screen fractions — convert to current capture frame pixels.
-        // This keeps the box locked on the same screen area after rotation.
-        val f = prefs.coordRoiF ?: return defaultRect(w, h)
+        // ROI is stored per-orientation as screen fractions — convert to current frame pixels.
+        val f = prefs.coordRoi(resources.configuration.orientation) ?: return defaultRect(w, h)
         return Rect(
             (f.left * w).toInt().coerceIn(0, w - 1),
             (f.top * h).toInt().coerceIn(0, h - 1),
@@ -136,6 +136,32 @@ class CaptureService : Service() {
         val r = w
         val b = (h * 0.27f).toInt()
         return Rect(l, t, r, b)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        rebuildDisplay()
+    }
+
+    /** Recreate ImageReader + VirtualDisplay at the new screen size after rotation,
+     *  so captured frames are not stretched/letterboxed and the ROI fractions stay accurate. */
+    private fun rebuildDisplay() {
+        try {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val dm = DisplayMetrics()
+            @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm)
+            if (dm.widthPixels == screenW && dm.heightPixels == screenH) return
+            screenW = dm.widthPixels; screenH = dm.heightPixels
+            try { vdisp?.release() } catch (_: Throwable) {}
+            try { reader?.close() } catch (_: Throwable) {}
+            reader = ImageReader.newInstance(screenW, screenH, PixelFormat.RGBA_8888, 2)
+            vdisp = projection?.createVirtualDisplay(
+                "ajcap", screenW, screenH, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader!!.surface, null, null
+            )
+            Log.i("AJ", "capture rebuilt ${screenW}x${screenH}")
+        } catch (t: Throwable) { Log.e("AJ", "rebuild display", t) }
     }
 
     override fun onDestroy() {
