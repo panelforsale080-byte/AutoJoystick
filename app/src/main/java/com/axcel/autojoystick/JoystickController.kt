@@ -35,6 +35,8 @@ object JoystickController {
     private var lastHandledPositionVersion = -1L
     private var probeTicks = 0
     private var learnedForCurrentStuck = false
+    private var stuckAnchor: Pair<Int, Int>? = null
+    private var lastRecoveryMapDirection: Pair<Float, Float>? = null
     private var learnedStore: LearnedObstacleStore? = null
 
     private const val TICK_MS = 260L
@@ -42,7 +44,6 @@ object JoystickController {
     private const val OCR_STALE_MS = 1_800L
     private const val STUCK_SAME_POSITION_UPDATES = 4
     private const val STUCK_NO_PROGRESS_UPDATES = 5
-    private const val MIN_FAILED_RECOVERIES_TO_LEARN = 2
     private const val PROGRESS_EPSILON = 0.75
     private const val MAX_PROBE_TICKS = 10
 
@@ -132,6 +133,8 @@ object JoystickController {
         lastHandledPositionVersion = -1L
         probeTicks = 0
         learnedForCurrentStuck = false
+        stuckAnchor = null
+        lastRecoveryMapDirection = null
         val target = parseCoord(targetCoord) ?: run {
             OverlayBus.status("invalid target $targetCoord"); return
         }
@@ -202,9 +205,31 @@ object JoystickController {
                         bestDistance = dist
                         noProgressTicks = 0
                         if (recoveryAttempts > 0) {
+                            /*
+                             * Learn only after the recovery actually moved the
+                             * character. The old code stored the direction of
+                             * the failed probe, which made the next run repeat
+                             * the wrong turn and circle around the obstacle.
+                             */
+                            if (!learnedForCurrentStuck) {
+                                val escape = lastRecoveryMapDirection
+                                val anchor = stuckAnchor
+                                if (escape != null && anchor != null) {
+                                    learnedStore?.record(
+                                        anchor.first,
+                                        anchor.second,
+                                        escape.first,
+                                        escape.second
+                                    )
+                                    learnedForCurrentStuck = true
+                                    OverlayBus.learnedCount(learnedStore?.count() ?: 0)
+                                }
+                            }
                             OverlayBus.status("RECOVERED | now ${cur.first},${cur.second} | d=%.1f".format(dist))
                             recoveryAttempts = 0
                             recoveryStage = 0
+                            stuckAnchor = null
+                            lastRecoveryMapDirection = null
                             learnedForCurrentStuck = false
                         }
                     } else {
@@ -272,27 +297,16 @@ object JoystickController {
         noProgressTicks = 0
         bestDistance = dist
         recoveryCooldownUntil = now + 1_100L
+        if (recoveryAttempts == 1) stuckAnchor = current
+        lastRecoveryMapDirection = recovery.first / radius to -recovery.second / radius
 
         /*
          * One failed probe is not enough evidence of an obstacle: OCR may be
          * late, the game may be animating, or the joystick may have missed a
-         * slice. Require two failed recovery directions before saving a map
-         * observation. The map y-axis is opposite the screen/joystick y-axis,
-         * so convert the joystick vector into map space instead of negating
-         * both axes.
+         * slice. Do not save anything here. A map observation is committed
+         * only from the progress branch above, after OCR proves that this
+         * recovery direction actually moved the character.
          */
-        if (!learnedForCurrentStuck &&
-            recoveryAttempts >= MIN_FAILED_RECOVERIES_TO_LEARN
-        ) {
-            learnedStore?.record(
-                current.first,
-                current.second,
-                recovery.first / radius,
-                -recovery.second / radius
-            )
-            learnedForCurrentStuck = true
-            OverlayBus.learnedCount(learnedStore?.count() ?: 0)
-        }
         releaseStroke()
         sendChain(svc, joystickBaseX + recovery.first, joystickBaseY + recovery.second)
 
@@ -301,7 +315,7 @@ object JoystickController {
             1 -> "diagonal-slide"
             else -> "reverse escape"
         }
-        val learningState = if (learnedForCurrentStuck) "obstacle confirmed" else "testing route"
+        val learningState = if (learnedForCurrentStuck) "route learned" else "testing route"
         OverlayBus.status(
             "STUCK #$recoveryAttempts — $mode | $learningState | d=%.1f | learned=${learnedStore?.count() ?: 0}"
                 .format(dist)

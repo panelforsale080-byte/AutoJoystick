@@ -168,9 +168,13 @@ class LearnedObstacleStore(ctx: Context) {
 
     @Synchronized
     fun clear() {
-        // Remove the old pre-confirmation key too. Those entries were allowed
-        // to affect routing after a single false stuck detection.
-        prefs.edit().remove(KEY).remove(LEGACY_KEY).apply()
+        // Remove records from every earlier learning version. Some of those
+        // records stored failed recovery directions and could cause circling.
+        prefs.edit()
+            .remove(KEY)
+            .remove(LEGACY_KEY)
+            .remove(LEGACY_V2_KEY)
+            .apply()
     }
 
     private fun save(items: List<LearnedObstacle>) {
@@ -190,8 +194,9 @@ class LearnedObstacleStore(ctx: Context) {
     }
 
     private companion object {
-        const val KEY = "obstacles_v2"
+        const val KEY = "obstacles_v3"
         const val LEGACY_KEY = "obstacles"
+        const val LEGACY_V2_KEY = "obstacles_v2"
         const val MAX_ENTRIES = 80
         const val MIN_CONFIRMATION_HITS = 2
         const val MERGE_RADIUS = 2.5
