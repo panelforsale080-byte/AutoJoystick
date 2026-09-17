@@ -179,7 +179,6 @@ object JoystickController {
 
         handler.removeCallbacksAndMessages(null)
         releaseStroke()
-        try { AccessibilityJoystickService.instance?.cancel() } catch (_: Throwable) {}
         OverlayBus.status("ARRIVED at ${target.first},${target.second} | d=%.1f".format(distance))
         return true
     }

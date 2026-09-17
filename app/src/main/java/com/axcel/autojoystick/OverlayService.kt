@@ -243,7 +243,6 @@ class OverlayService : Service() {
         btnStop.setOnClickListener {
             JoystickController.running = false
             JoystickController.releaseStroke()
-            try { AccessibilityJoystickService.instance?.cancel() } catch (_: Throwable) {}
             status.text = "stopped"
         }
 

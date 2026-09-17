@@ -63,7 +63,11 @@ class AccessibilityJoystickService : AccessibilityService() {
 
     /** Lift the finger NOW: end the chain with a final short non-continuing stroke. */
     fun endStroke() {
-        ui.post { endStrokeOnUi() }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            endStrokeOnUi()
+        } else {
+            ui.postAtFrontOfQueue { endStrokeOnUi() }
+        }
     }
 
     private fun endStrokeOnUi() {
