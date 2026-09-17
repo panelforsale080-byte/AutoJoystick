@@ -30,6 +30,7 @@ class CaptureService : Service() {
         var pendingResultCode: Int = 0
         var pendingData: Intent? = null
         @Volatile var running: Boolean = false
+        private const val OCR_INTERVAL_MS = 280L
     }
 
     private var projection: MediaProjection? = null
@@ -41,10 +42,6 @@ class CaptureService : Service() {
     private var screenH = 0
     private lateinit var prefs: PreferenceStore
     @Volatile private var ocrInFlight = false
-
-    private companion object {
-        const val OCR_INTERVAL_MS = 280L
-    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
