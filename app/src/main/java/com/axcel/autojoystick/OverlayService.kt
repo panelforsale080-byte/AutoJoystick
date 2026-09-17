@@ -262,9 +262,7 @@ class OverlayService : Service() {
             status.text = "running → $t"
         }
         btnStop.setOnClickListener {
-            JoystickController.running = false
-            JoystickController.cancelStuckPrompt()
-            JoystickController.releaseStroke()
+            JoystickController.stop()
             status.text = "stopped"
         }
 

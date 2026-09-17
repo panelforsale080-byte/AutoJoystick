@@ -58,6 +58,7 @@ object JoystickController {
     private const val PROGRESS_EPSILON = 0.75
     private const val MAX_PROBE_TICKS = 10
     private const val STUCK_PROMPT_COOLDOWN_MS = 3_500L
+    private const val START_SETTLE_MS = 260L
 
     fun initialize(context: Context) {
         learnedStore = LearnedObstacleStore(context)
@@ -76,6 +77,16 @@ object JoystickController {
         pendingStuckPrompt = null
         awaitingStuckAnswer = false
         OverlayBus.hideStuckPrompt()
+    }
+
+    fun stop() {
+        running = false
+        handler.removeCallbacksAndMessages(null)
+        cancelStuckPrompt()
+        releaseStroke()
+        lastEndX = joystickBaseX
+        lastEndY = joystickBaseY
+        OcrEngine.resetTracking()
     }
 
     /**
@@ -187,6 +198,12 @@ object JoystickController {
 
     fun tick() {
         handler.removeCallbacksAndMessages(null)
+        if (strokeActive) {
+            releaseStroke()
+            lastEndX = joystickBaseX
+            lastEndY = joystickBaseY
+        }
+        OcrEngine.resetTracking()
         stillTicks = 0
         lastPos = null
         bestDistance = Double.POSITIVE_INFINITY
@@ -335,7 +352,9 @@ object JoystickController {
             }
         }
         loopRunnable = loop
-        handler.post(loop)
+        // Let the release gesture finish before starting a fresh chain. This
+        // prevents a second START from inheriting the previous endpoint.
+        handler.postDelayed(loop, START_SETTLE_MS)
     }
 
     /**
