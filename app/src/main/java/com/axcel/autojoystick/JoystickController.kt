@@ -8,6 +8,7 @@ object JoystickController {
     var joystickBaseY: Float = 0f
     var joystickRadius: Float = 180f
     var targetCoord: String = "51,35"
+    @Volatile var arrivalRadius: Float = 5f
     @Volatile var currentXY: Pair<Int, Int>? = null
     @Volatile var running: Boolean = false
 
@@ -59,10 +60,10 @@ object JoystickController {
         OverlayBus.push("$x,$y")
         val t = parseCoord(targetCoord) ?: return
         val dist = Math.hypot((t.first - x).toDouble(), (t.second - y).toDouble())
-        if (dist <= 1.5 && running) {
+        if (dist <= arrivalRadius && running) {
             running = false
             releaseStroke()
-            OverlayBus.status("ARRIVED at ${t.first},${t.second}")
+            OverlayBus.status("ARRIVED at ${t.first},${t.second} | d=%.1f ≤ r=%.1f".format(dist, arrivalRadius))
         }
     }
 
@@ -99,10 +100,10 @@ object JoystickController {
                 }
 
                 val dist = Math.hypot((target.first - cur.first).toDouble(), (target.second - cur.second).toDouble())
-                if (dist <= 1.5) {
+                if (dist <= arrivalRadius) {
                     running = false
                     releaseStroke()
-                    OverlayBus.status("ARRIVED at ${target.first},${target.second}")
+                    OverlayBus.status("ARRIVED at ${target.first},${target.second} | d=%.1f ≤ r=%.1f".format(dist, arrivalRadius))
                     return
                 }
 

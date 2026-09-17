@@ -42,4 +42,9 @@ class PreferenceStore(ctx: Context) {
     var invert: Boolean
         get() = p.getBoolean("invert", false)
         set(v) { p.edit().putBoolean("invert", v).apply() }
+
+    // --- Arrival tolerance (map units) ---
+    var arrivalRadius: Float
+        get() = p.getFloat("arrival_radius", 5f).coerceIn(5f, 10f)
+        set(v) { p.edit().putFloat("arrival_radius", v.coerceIn(5f, 10f)).apply() }
 }

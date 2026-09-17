@@ -74,6 +74,22 @@
             android:textColorHint="#6F6F7A"
             android:textSize="14sp"/>
 
+        <TextView
+            android:id="@+id/ov_arrival_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:text="arrival range: 5 map units"
+            android:textColor="#FFD54F"
+            android:textSize="11sp"/>
+
+        <SeekBar
+            android:id="@+id/ov_arrival"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="5"
+            android:progress="0"/>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

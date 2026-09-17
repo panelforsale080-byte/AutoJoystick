@@ -127,11 +127,16 @@ class OverlayService : Service() {
         val contrastBar = v.findViewById<SeekBar>(R.id.ov_contrast)
         val brightBar = v.findViewById<SeekBar>(R.id.ov_brightness)
         val invertSwitch = v.findViewById<Switch>(R.id.ov_invert)
+        val arrivalLabel = v.findViewById<TextView>(R.id.ov_arrival_label)
+        val arrivalBar = v.findViewById<SeekBar>(R.id.ov_arrival)
 
         targetInput.setText(JoystickController.targetCoord)
         contrastBar.progress = ((prefs.contrast - 0.5f) * 100f).toInt().coerceIn(0, 250)
         brightBar.progress = (prefs.brightness + 128).coerceIn(0, 256)
         invertSwitch.isChecked = prefs.invert
+        JoystickController.arrivalRadius = prefs.arrivalRadius
+        arrivalBar.progress = (prefs.arrivalRadius.toInt() - 5).coerceIn(0, 5)
+        arrivalLabel.text = "arrival range: ${prefs.arrivalRadius.toInt()} map units"
 
         title.setOnTouchListener(object : View.OnTouchListener {
             var sx = 0; var sy = 0; var px = 0f; var py = 0f
@@ -207,6 +212,19 @@ class OverlayService : Service() {
             prefs.invert = c
             status.text = "invert=$c"
         }
+        arrivalBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                val value = (5 + p).toFloat()
+                JoystickController.arrivalRadius = value
+                arrivalLabel.text = "arrival range: ${value.toInt()} map units"
+                if (fromUser) {
+                    prefs.arrivalRadius = value
+                    status.text = "arrival range=$value"
+                }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
 
         btnStart.setOnClickListener {
             val t = targetInput.text.toString().trim().ifBlank { "51,35" }
