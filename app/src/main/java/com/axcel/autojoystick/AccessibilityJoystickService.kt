@@ -65,7 +65,7 @@ class AccessibilityJoystickService : AccessibilityService() {
         if (ok) { activeStroke = s; strokeAgeMs = 350 } else OverlayBus.debugText("press REJECTED")
     }
 
-    private fun cb() = object : GestureDescription.GestureResultCallback() {
+    private fun cb() = object : GestureResultCallback() {
         override fun onCompleted(g: GestureDescription?) {}
         override fun onCancelled(g: GestureDescription?) {
             activeStroke = null; strokeAgeMs = 0

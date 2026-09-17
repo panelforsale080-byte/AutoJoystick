@@ -32,9 +32,11 @@ object JoystickController {
         val svc = AccessibilityJoystickService.instance
         if (svc == null) { OverlayBus.status("TEST: accessibility OFF"); return }
         if (joystickBaseX <= 0f) { OverlayBus.status("TEST: press CAL JOY first"); return }
-        strokeActive = false
-        svc.fireSegment(joystickBaseX, joystickBaseY, joystickBaseX + joystickRadius * 0.8f, joystickBaseY, 500, false)
-        OverlayBus.status("TEST drag → right from ${joystickBaseX.toInt()},${joystickBaseY.toInt()}")
+        releaseStroke()
+        svc.hold(joystickBaseX, joystickBaseY, joystickBaseX + joystickRadius * 0.8f, joystickBaseY)
+        strokeActive = svc.holding()
+        OverlayBus.status("TEST hold → right from ${joystickBaseX.toInt()},${joystickBaseY.toInt()}")
+        handler.postDelayed({ releaseStroke() }, 600)
     }
 
     fun parseCoord(s: String): Pair<Int, Int>? {
