@@ -1,8 +1,10 @@
 package com.axcel.autojoystick
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import kotlin.math.hypot
 
 object JoystickController {
     var joystickBaseX: Float = 0f
@@ -30,13 +32,30 @@ object JoystickController {
     private var recoveryCooldownUntil = 0L
     private var lastOcrAt = 0L
     private var probeTicks = 0
+    private var learnedForCurrentStuck = false
+    private var learnedStore: LearnedObstacleStore? = null
 
-    private const val TICK_MS = 650L
-    private const val OCR_STALE_MS = 3_000L
-    private const val STUCK_SAME_POSITION_TICKS = 4
-    private const val STUCK_NO_PROGRESS_TICKS = 5
+    private const val TICK_MS = 260L
+    private const val GESTURE_MS = 240L
+    private const val OCR_STALE_MS = 1_800L
+    private const val STUCK_SAME_POSITION_TICKS = 5
+    private const val STUCK_NO_PROGRESS_TICKS = 6
     private const val MAX_RECOVERY_ATTEMPTS = 6
     private const val PROGRESS_EPSILON = 0.75
+    private const val MAX_PROBE_TICKS = 10
+
+    fun initialize(context: Context) {
+        learnedStore = LearnedObstacleStore(context)
+        OverlayBus.learnedCount(learnedStore?.count() ?: 0)
+    }
+
+    fun learnedObstacleCount(): Int = learnedStore?.count() ?: 0
+
+    fun clearLearnedObstacles() {
+        learnedStore?.clear()
+        OverlayBus.learnedCount(0)
+        OverlayBus.status("learned obstacle memory cleared")
+    }
 
     /** System cancelled a continued gesture — next drag must start fresh from base. */
     fun strokeBroken() { strokeActive = false }
@@ -59,8 +78,9 @@ object JoystickController {
     }
 
     fun computeDrag(current: Pair<Int, Int>, target: Pair<Int, Int>, maxMapDist: Int = 30): Pair<Float, Float> {
-        val dx = (target.first - current.first).toDouble()
-        val dy = (target.second - current.second).toDouble()
+        val navigationTarget = learnedStore?.detourTarget(current, target, arrivalRadius) ?: target
+        val dx = (navigationTarget.first - current.first).toDouble()
+        val dy = (navigationTarget.second - current.second).toDouble()
         val n = Math.sqrt(dx * dx + dy * dy)
         if (n < 0.5) return 0f to 0f
         val ang = Math.atan2(-dy, dx)
@@ -89,10 +109,11 @@ object JoystickController {
     }
 
     fun releaseStroke() {
-        val svc = AccessibilityJoystickService.instance ?: return
-        if (strokeActive) {
+        val svc = AccessibilityJoystickService.instance
+        val wasActive = strokeActive
+        strokeActive = false
+        if (svc != null && wasActive) {
             svc.fireSegment(lastEndX, lastEndY, joystickBaseX, joystickBaseY, 150, false)
-            strokeActive = false
         }
     }
 
@@ -106,6 +127,7 @@ object JoystickController {
         recoveryStage = 0
         recoveryCooldownUntil = 0L
         probeTicks = 0
+        learnedForCurrentStuck = false
         val target = parseCoord(targetCoord) ?: run {
             OverlayBus.status("invalid target $targetCoord"); return
         }
@@ -119,7 +141,7 @@ object JoystickController {
                 val cur = currentXY
                 if (cur == null) {
                     probeTicks++
-                    if (probeTicks >= 8) {
+                    if (probeTicks >= MAX_PROBE_TICKS) {
                         running = false
                         releaseStroke()
                         OverlayBus.status("OCR no coordinate — stopped safely")
@@ -170,6 +192,7 @@ object JoystickController {
                         OverlayBus.status("RECOVERED | now ${cur.first},${cur.second} | d=%.1f".format(dist))
                         recoveryAttempts = 0
                         recoveryStage = 0
+                        learnedForCurrentStuck = false
                     }
                 } else {
                     noProgressTicks++
@@ -191,8 +214,8 @@ object JoystickController {
                         OverlayBus.status("STUCK — stopped safely after $MAX_RECOVERY_ATTEMPTS recoveries")
                         return
                     }
-                    recoverFromStuck(svc, ox, oy, dist, now)
-                    handler.postDelayed(this, 900L)
+                    recoverFromStuck(svc, cur, ox, oy, dist, now)
+                    handler.postDelayed(this, 320L)
                     return
                 }
 
@@ -213,6 +236,7 @@ object JoystickController {
      */
     private fun recoverFromStuck(
         svc: AccessibilityJoystickService,
+        current: Pair<Int, Int>,
         ox: Float,
         oy: Float,
         dist: Double,
@@ -238,10 +262,20 @@ object JoystickController {
         stillTicks = 0
         noProgressTicks = 0
         bestDistance = dist
-        recoveryCooldownUntil = now + 2_200L
+        recoveryCooldownUntil = now + 1_100L
 
         // Explicitly lift the old chain before changing direction. This avoids
         // carrying a blocked gesture into the recovery gesture.
+        if (!learnedForCurrentStuck) {
+            learnedStore?.record(
+                current.first,
+                current.second,
+                -recovery.first / radius,
+                -recovery.second / radius
+            )
+            learnedForCurrentStuck = true
+            OverlayBus.learnedCount(learnedStore?.count() ?: 0)
+        }
         releaseStroke()
         sendChain(svc, joystickBaseX + recovery.first, joystickBaseY + recovery.second)
 
@@ -250,15 +284,18 @@ object JoystickController {
             1 -> "diagonal-slide"
             else -> "reverse escape"
         }
-        OverlayBus.status("STUCK #$recoveryAttempts — $mode | d=%.1f".format(dist))
+        OverlayBus.status(
+            "STUCK #$recoveryAttempts — $mode | d=%.1f | learned=${learnedStore?.count() ?: 0}"
+                .format(dist)
+        )
     }
 
     private fun sendChain(svc: AccessibilityJoystickService, ex: Float, ey: Float) {
         if (!strokeActive) {
-            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 500, true)
+            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, GESTURE_MS, true)
             strokeActive = true
         } else {
-            svc.fireSegment(lastEndX, lastEndY, ex, ey, 500, true)
+            svc.fireSegment(lastEndX, lastEndY, ex, ey, GESTURE_MS, true)
         }
         lastEndX = ex; lastEndY = ey
     }

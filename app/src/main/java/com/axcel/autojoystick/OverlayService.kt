@@ -41,6 +41,7 @@ class OverlayService : Service() {
         super.onCreate()
         try {
             prefs = PreferenceStore(this)
+            JoystickController.initialize(this)
             applySavedJoystick()
             ensureChannel()
             val notif = Notification.Builder(this, "autojoy")
@@ -129,6 +130,8 @@ class OverlayService : Service() {
         val invertSwitch = v.findViewById<Switch>(R.id.ov_invert)
         val arrivalLabel = v.findViewById<TextView>(R.id.ov_arrival_label)
         val arrivalBar = v.findViewById<SeekBar>(R.id.ov_arrival)
+        val learnedLabel = v.findViewById<TextView>(R.id.ov_learned)
+        val clearLearned = v.findViewById<Button>(R.id.ov_clear_learned)
 
         targetInput.setText(JoystickController.targetCoord)
         contrastBar.progress = ((prefs.contrast - 0.5f) * 100f).toInt().coerceIn(0, 250)
@@ -137,6 +140,11 @@ class OverlayService : Service() {
         JoystickController.arrivalRadius = prefs.arrivalRadius
         arrivalBar.progress = (prefs.arrivalRadius.toInt() - 5).coerceIn(0, 5)
         arrivalLabel.text = "arrival range: ${prefs.arrivalRadius.toInt()} map units"
+        learnedLabel.text = "learned obstacles: ${JoystickController.learnedObstacleCount()}"
+        clearLearned.setOnClickListener {
+            JoystickController.clearLearnedObstacles()
+            learnedLabel.text = "learned obstacles: 0"
+        }
 
         title.setOnTouchListener(object : View.OnTouchListener {
             var sx = 0; var sy = 0; var px = 0f; var py = 0f
@@ -271,6 +279,7 @@ class OverlayService : Service() {
         OverlayBus.statusView = status
         OverlayBus.debugView = debug
         OverlayBus.previewView = preview
+        OverlayBus.learnedView = learnedLabel
         android.util.Log.i("AJ", "overlay panel added; panel visible=VISIBLE dot=GONE at x=${lp.x},y=${lp.y}")
         try { Toast.makeText(this, "AutoJoystick overlay ready", Toast.LENGTH_SHORT).show() } catch (_: Throwable) {}
     }
@@ -516,12 +525,29 @@ object OverlayBus {
     var statusView: TextView? = null
     var debugView: TextView? = null
     var previewView: ImageView? = null
+    var learnedView: TextView? = null
+    private var lastPreview: Bitmap? = null
     fun push(c: String) { coordView?.post { coordView?.text = "coord: $c" } }
     fun status(s: String) { statusView?.post { statusView?.text = s } }
     fun debugText(s: String) { debugView?.post { debugView?.text = "raw: ${s.ifBlank { "—" }}" } }
+    fun learnedCount(count: Int) {
+        learnedView?.post { learnedView?.text = "learned obstacles: $count" }
+    }
     fun preview(bmp: Bitmap) {
-        previewView?.post {
-            try { previewView?.setImageBitmap(bmp) } catch (_: Throwable) {}
+        val view = previewView
+        if (view == null) {
+            bmp.recycle()
+            return
+        }
+        view.post {
+            try {
+                val old = lastPreview
+                lastPreview = bmp
+                view.setImageBitmap(bmp)
+                if (old != null && !old.isRecycled) old.recycle()
+            } catch (_: Throwable) {
+                if (!bmp.isRecycled) bmp.recycle()
+            }
         }
     }
 }

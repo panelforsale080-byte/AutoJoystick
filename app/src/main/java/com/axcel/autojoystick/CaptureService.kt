@@ -40,10 +40,16 @@ class CaptureService : Service() {
     private var screenW = 0
     private var screenH = 0
     private lateinit var prefs: PreferenceStore
+    @Volatile private var ocrInFlight = false
+
+    private companion object {
+        const val OCR_INTERVAL_MS = 280L
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (running) return START_STICKY
         try {
             prefs = PreferenceStore(this)
             ensureChannel()
@@ -80,42 +86,61 @@ class CaptureService : Service() {
         override fun run() {
             if (!running) return
             try { grabAndOcr() } catch (t: Throwable) { Log.w("AJ", "grab: ${t.message}") }
-            handler?.postDelayed(this, 750)
+            handler?.postDelayed(this, OCR_INTERVAL_MS)
         }
     }
 
     private fun grabAndOcr() {
+        if (ocrInFlight) return
         val r = reader ?: return
         val img = r.acquireLatestImage() ?: return
-        val w = img.width; val h = img.height
-        val plane = img.planes[0]
-        val rowStride = plane.rowStride
-        val pixelStride = plane.pixelStride
-        val buffer = plane.buffer
-        val rowPadding = rowStride - pixelStride * w
-        val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
-        bmp.copyPixelsFromBuffer(buffer); img.close()
-        val full = Bitmap.createBitmap(bmp, 0, 0, w, h); bmp.recycle()
+        var processed: Bitmap? = null
+        try {
+            ocrInFlight = true
+            val w = img.width; val h = img.height
+            val plane = img.planes[0]
+            val rowStride = plane.rowStride
+            val pixelStride = plane.pixelStride
+            val buffer = plane.buffer
+            val rowPadding = rowStride - pixelStride * w
+            val bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888)
+            bmp.copyPixelsFromBuffer(buffer)
 
-        // Use user-calibrated ROI rect when available, scaled from capture space to frame space.
-        val roi = effectiveRect(w, h)
-        if (roi.width() <= 4 || roi.height() <= 4) { full.recycle(); return }
-        val crop = Bitmap.createBitmap(full, roi.left, roi.top, roi.width(), roi.height())
-        full.recycle()
-
-        val processed = ImageUtil.applyPreprocess(crop, prefs.contrast, prefs.brightness, prefs.invert)
-        crop.recycle()
-
-        // Always push processed crop preview + raw text to UI
-        OverlayBus.preview(processed)
-
-        OcrEngine.recognizeCoord(processed) { result ->
-            // processed bitmap already recycled via OverlayBus.preview path
-            PreviewCache.lastText = result.rawText.take(120)
-            OverlayBus.debugText(result.rawText.take(80))
-            if (result.coord != null) {
-                JoystickController.onPositionUpdate(result.coord.first, result.coord.second)
+            // Use user-calibrated ROI rect when available, scaled from capture space to frame space.
+            val roi = effectiveRect(w, h)
+            if (roi.width() <= 4 || roi.height() <= 4) {
+                bmp.recycle()
+                ocrInFlight = false
+                return
             }
+            val full = Bitmap.createBitmap(bmp, 0, 0, w, h)
+            bmp.recycle()
+            val crop = Bitmap.createBitmap(full, roi.left, roi.top, roi.width(), roi.height())
+            full.recycle()
+
+            processed = ImageUtil.applyPreprocess(crop, prefs.contrast, prefs.brightness, prefs.invert)
+            crop.recycle()
+
+            // The preview needs its own bitmap because ML Kit owns the OCR input
+            // until its asynchronous callback completes.
+            val ocrBitmap = processed
+            OverlayBus.preview(ocrBitmap.copy(Bitmap.Config.ARGB_8888, false))
+            OcrEngine.recognizeCoord(ocrBitmap) { result ->
+                PreviewCache.lastText = result.rawText.take(120)
+                OverlayBus.debugText(result.rawText.take(80))
+                if (result.coord != null) {
+                    JoystickController.onPositionUpdate(result.coord.first, result.coord.second)
+                }
+                if (!ocrBitmap.isRecycled) ocrBitmap.recycle()
+                processed = null
+                ocrInFlight = false
+            }
+        } catch (t: Throwable) {
+            Log.w("AJ", "ocr frame: ${t.message}")
+            processed?.let { if (!it.isRecycled) it.recycle() }
+            ocrInFlight = false
+        } finally {
+            img.close()
         }
     }
 
