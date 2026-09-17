@@ -172,6 +172,7 @@ class LearnedObstacleStore(ctx: Context) {
         // records stored failed recovery directions and could cause circling.
         prefs.edit()
             .remove(KEY)
+            .remove(LEGACY_V3_KEY)
             .remove(LEGACY_KEY)
             .remove(LEGACY_V2_KEY)
             .apply()
@@ -194,7 +195,10 @@ class LearnedObstacleStore(ctx: Context) {
     }
 
     private companion object {
-        const val KEY = "obstacles_v3"
+        // v4 uses the corrected map-space Y direction. Older records were
+        // written with the inverted recovery Y and must not be reused.
+        const val KEY = "obstacles_v4"
+        const val LEGACY_V3_KEY = "obstacles_v3"
         const val LEGACY_KEY = "obstacles"
         const val LEGACY_V2_KEY = "obstacles_v2"
         const val MAX_ENTRIES = 80

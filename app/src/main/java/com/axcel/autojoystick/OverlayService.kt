@@ -67,6 +67,7 @@ class OverlayService : Service() {
         try { calibrateView?.let { wm.removeView(it) } } catch (_: Throwable) {}
         rootView = null; calibrateView = null
         try { JoystickController.running = false } catch (_: Throwable) {}
+        try { JoystickController.cancelStuckPrompt() } catch (_: Throwable) {}
         super.onDestroy()
     }
 
@@ -132,6 +133,10 @@ class OverlayService : Service() {
         val arrivalBar = v.findViewById<SeekBar>(R.id.ov_arrival)
         val learnedLabel = v.findViewById<TextView>(R.id.ov_learned)
         val clearLearned = v.findViewById<Button>(R.id.ov_clear_learned)
+        val stuckPrompt = v.findViewById<View>(R.id.ov_stuck_prompt)
+        val stuckQuestion = v.findViewById<TextView>(R.id.ov_stuck_question)
+        val stuckYes = v.findViewById<Button>(R.id.ov_stuck_yes)
+        val stuckNo = v.findViewById<Button>(R.id.ov_stuck_no)
 
         targetInput.setText(JoystickController.targetCoord)
         contrastBar.progress = ((prefs.contrast - 0.5f) * 100f).toInt().coerceIn(0, 250)
@@ -145,6 +150,9 @@ class OverlayService : Service() {
             JoystickController.clearLearnedObstacles()
             learnedLabel.text = "learned obstacles: 0"
         }
+        stuckYes.setOnClickListener { JoystickController.answerStuck(true) }
+        stuckNo.setOnClickListener { JoystickController.answerStuck(false) }
+        stuckPrompt.visibility = View.GONE
 
         title.setOnTouchListener(object : View.OnTouchListener {
             var sx = 0; var sy = 0; var px = 0f; var py = 0f
@@ -255,6 +263,7 @@ class OverlayService : Service() {
         }
         btnStop.setOnClickListener {
             JoystickController.running = false
+            JoystickController.cancelStuckPrompt()
             JoystickController.releaseStroke()
             status.text = "stopped"
         }
@@ -280,6 +289,8 @@ class OverlayService : Service() {
         OverlayBus.debugView = debug
         OverlayBus.previewView = preview
         OverlayBus.learnedView = learnedLabel
+        OverlayBus.stuckPromptView = stuckPrompt
+        OverlayBus.stuckQuestionView = stuckQuestion
         android.util.Log.i("AJ", "overlay panel added; panel visible=VISIBLE dot=GONE at x=${lp.x},y=${lp.y}")
         try { Toast.makeText(this, "AutoJoystick overlay ready", Toast.LENGTH_SHORT).show() } catch (_: Throwable) {}
     }
@@ -526,12 +537,26 @@ object OverlayBus {
     var debugView: TextView? = null
     var previewView: ImageView? = null
     var learnedView: TextView? = null
+    var stuckPromptView: View? = null
+    var stuckQuestionView: TextView? = null
     private var lastPreview: Bitmap? = null
     fun push(c: String) { coordView?.post { coordView?.text = "coord: $c" } }
     fun status(s: String) { statusView?.post { statusView?.text = s } }
     fun debugText(s: String) { debugView?.post { debugView?.text = "raw: ${s.ifBlank { "—" }}" } }
     fun learnedCount(count: Int) {
         learnedView?.post { learnedView?.text = "learned obstacles: $count" }
+    }
+    fun stuckPrompt(current: Pair<Int, Int>, target: Pair<Int, Int>, distance: Double) {
+        stuckPromptView?.post {
+            stuckQuestionView?.text =
+                "No movement detected at ${current.first},${current.second}. " +
+                    "Is the character stuck? (target ${target.first},${target.second}, " +
+                    "distance ${"%.1f".format(distance)})"
+            stuckPromptView?.visibility = View.VISIBLE
+        }
+    }
+    fun hideStuckPrompt() {
+        stuckPromptView?.post { stuckPromptView?.visibility = View.GONE }
     }
     fun preview(bmp: Bitmap) {
         val view = previewView

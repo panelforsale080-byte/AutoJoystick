@@ -37,6 +37,17 @@ object JoystickController {
     private var learnedForCurrentStuck = false
     private var stuckAnchor: Pair<Int, Int>? = null
     private var lastRecoveryMapDirection: Pair<Float, Float>? = null
+    private data class StuckPrompt(
+        val current: Pair<Int, Int>,
+        val target: Pair<Int, Int>,
+        val ox: Float,
+        val oy: Float,
+        val distance: Double
+    )
+    private var pendingStuckPrompt: StuckPrompt? = null
+    private var awaitingStuckAnswer = false
+    private var stuckPromptCooldownUntil = 0L
+    private var loopRunnable: Runnable? = null
     private var learnedStore: LearnedObstacleStore? = null
 
     private const val TICK_MS = 260L
@@ -46,6 +57,7 @@ object JoystickController {
     private const val STUCK_NO_PROGRESS_UPDATES = 5
     private const val PROGRESS_EPSILON = 0.75
     private const val MAX_PROBE_TICKS = 10
+    private const val STUCK_PROMPT_COOLDOWN_MS = 3_500L
 
     fun initialize(context: Context) {
         learnedStore = LearnedObstacleStore(context)
@@ -58,6 +70,54 @@ object JoystickController {
         learnedStore?.clear()
         OverlayBus.learnedCount(0)
         OverlayBus.status("learned obstacle memory cleared")
+    }
+
+    fun cancelStuckPrompt() {
+        pendingStuckPrompt = null
+        awaitingStuckAnswer = false
+        OverlayBus.hideStuckPrompt()
+    }
+
+    /**
+     * The overlay asks the user before recovery starts. A "yes" permits the
+     * normal recovery/learning path; a "no" resumes navigation without
+     * recording a route as an obstacle.
+     */
+    fun answerStuck(isStuck: Boolean) {
+        handler.post {
+            val prompt = pendingStuckPrompt ?: return@post
+            pendingStuckPrompt = null
+            awaitingStuckAnswer = false
+            OverlayBus.hideStuckPrompt()
+            if (!running) return@post
+
+            if (!isStuck) {
+                stillTicks = 0
+                noProgressTicks = 0
+                bestDistance = prompt.distance
+                stuckPromptCooldownUntil =
+                    SystemClock.elapsedRealtime() + STUCK_PROMPT_COOLDOWN_MS
+                OverlayBus.status("USER: not stuck — continuing without learning")
+                loopRunnable?.let { handler.postDelayed(it, TICK_MS) }
+                return@post
+            }
+
+            val svc = AccessibilityJoystickService.instance
+            if (svc == null) {
+                running = false
+                OverlayBus.status("accessibility stopped — recovery cancelled")
+                return@post
+            }
+            recoverFromStuck(
+                svc,
+                prompt.current,
+                prompt.ox,
+                prompt.oy,
+                prompt.distance,
+                SystemClock.elapsedRealtime()
+            )
+            loopRunnable?.let { handler.postDelayed(it, 320L) }
+        }
     }
 
     /** System cancelled a continued gesture — next drag must start fresh from base. */
@@ -86,7 +146,11 @@ object JoystickController {
         val dy = (navigationTarget.second - current.second).toDouble()
         val n = Math.sqrt(dx * dx + dy * dy)
         if (n < 0.5) return 0f to 0f
-        val ang = Math.atan2(-dy, dx)
+        // Map Y follows the game coordinate direction: a smaller Y is north,
+        // and north is the physical joystick-up direction. The previous
+        // -dy inverted every vertical correction, so targets above the
+        // current coordinate could not be reached reliably.
+        val ang = Math.atan2(dy, dx)
         val ratio = (n / maxMapDist).coerceIn(0.0, 1.0)
         val r = joystickRadius * (0.4f + 0.6f * ratio.toFloat())
         return (Math.cos(ang) * r).toFloat() to (Math.sin(ang) * r).toFloat()
@@ -135,12 +199,15 @@ object JoystickController {
         learnedForCurrentStuck = false
         stuckAnchor = null
         lastRecoveryMapDirection = null
+        stuckPromptCooldownUntil = 0L
+        cancelStuckPrompt()
         val target = parseCoord(targetCoord) ?: run {
             OverlayBus.status("invalid target $targetCoord"); return
         }
-        handler.post(object : Runnable {
+        val loop = object : Runnable {
             override fun run() {
                 if (!running) { releaseStroke(); return }
+                if (awaitingStuckAnswer) return
                 val svc = AccessibilityJoystickService.instance
                 if (svc == null) { OverlayBus.status("enable accessibility first"); running = false; releaseStroke(); return }
                 if (joystickBaseX <= 0f) { OverlayBus.status("press CAL JOY first"); running = false; return }
@@ -247,9 +314,15 @@ object JoystickController {
                 val stuck = dist > arrivalRadius + 1.0 &&
                     (stillTicks >= STUCK_SAME_POSITION_UPDATES ||
                         noProgressTicks >= STUCK_NO_PROGRESS_UPDATES)
-                if (stuck && now >= recoveryCooldownUntil) {
-                    recoverFromStuck(svc, cur, ox, oy, dist, now)
-                    handler.postDelayed(this, 320L)
+                if (stuck &&
+                    now >= recoveryCooldownUntil &&
+                    now >= stuckPromptCooldownUntil
+                ) {
+                    pendingStuckPrompt = StuckPrompt(cur, target, ox, oy, dist)
+                    awaitingStuckAnswer = true
+                    releaseStroke()
+                    OverlayBus.stuckPrompt(cur, target, dist)
+                    OverlayBus.status("STUCK? answer YES or NO")
                     return
                 }
 
@@ -260,7 +333,9 @@ object JoystickController {
                 OverlayBus.status("→ ${target.first},${target.second} | now ${cur.first},${cur.second} | d=%.1f%s".format(dist, progress))
                 handler.postDelayed(this, TICK_MS)
             }
-        })
+        }
+        loopRunnable = loop
+        handler.post(loop)
     }
 
     /**
@@ -298,7 +373,9 @@ object JoystickController {
         bestDistance = dist
         recoveryCooldownUntil = now + 1_100L
         if (recoveryAttempts == 1) stuckAnchor = current
-        lastRecoveryMapDirection = recovery.first / radius to -recovery.second / radius
+        // Keep learned directions in the same map-space Y convention used by
+        // computeDrag: positive screen/map Y means joystick down.
+        lastRecoveryMapDirection = recovery.first / radius to recovery.second / radius
 
         /*
          * One failed probe is not enough evidence of an obstacle: OCR may be
