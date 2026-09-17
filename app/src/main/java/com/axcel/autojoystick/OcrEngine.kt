@@ -13,21 +13,6 @@ object OcrEngine {
 
     data class Result(val coord: Pair<Int, Int>?, val rawText: String)
 
-    /** ML Kit sometimes reads the opening "(" of "(28,24)" as a "1" -> "128,24".
-     *  Rule: strip a leading "1" from a 3-digit x in 100..199 ONLY when the element
-     *  has a closing ")" but the digit-run is not preceded by "(" — meaning the "("
-     *  itself was misread. Genuine 3-digit coords like 140,29 (no stray paren, or a
-     *  real "(" before them) are left untouched. */
-    fun fixLeadingParenOne(elText: String, x: Int): Int {
-        if (x !in 100..199) return x
-        val digits = x.toString()
-        val idx = elText.indexOf(digits)
-        val before = if (idx > 0) elText[idx - 1] else ' '
-        val hasClose = elText.contains(')') || elText.contains(']') || elText.contains('}')
-        val hasOpenBefore = before == '(' || before == '[' || before == '{' || elText.take(idx).contains('(')
-        return if (hasClose && !hasOpenBefore) x % 100 else x
-    }
-
     fun recognizeCoord(bitmap: Bitmap, onResult: (Result) -> Unit) {
         try {
             val img = InputImage.fromBitmap(bitmap, 0)
@@ -43,7 +28,11 @@ object OcrEngine {
                                 val m = coordRegex.find(el.text) ?: continue
                                 val xRaw = m.groupValues[1].toIntOrNull() ?: continue
                                 val yRaw = m.groupValues[2].toIntOrNull() ?: continue
-                                val x = fixLeadingParenOne(el.text, xRaw)
+                                // Keep all valid 1–3 digit values. A previous
+                                // heuristic stripped the leading 1 from valid
+                                // coordinates such as "137,283)" when OCR
+                                // dropped the opening parenthesis.
+                                val x = xRaw
                                 val y = yRaw
                                 if (x in 0..400 && y in 0..400) {
                                     best = x to y; break
