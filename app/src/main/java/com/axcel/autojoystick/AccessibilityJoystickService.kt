@@ -64,7 +64,14 @@ class AccessibilityJoystickService : AccessibilityService() {
         if (Build.VERSION.SDK_INT < 24) return
         synchronized(gestureLock) {
             val segment = Segment(sx, sy, ex, ey, max(80L, durationMs), willContinue)
-            if (willContinue) queuedSegment = segment else queuedRelease = segment
+            if (willContinue) {
+                queuedSegment = segment
+            } else {
+                // A release is a hard stop. Never allow an older movement
+                // segment to run after the finger has been released.
+                queuedSegment = null
+                queuedRelease = segment
+            }
             dispatchQueuedLocked()
         }
     }
@@ -78,11 +85,11 @@ class AccessibilityJoystickService : AccessibilityService() {
             moveTo(segment.sx, segment.sy)
             lineTo(segment.ex, segment.ey)
         }
-        val stroke = if (Build.VERSION.SDK_INT >= 26 &&
-            segment.willContinue &&
-            continuedStroke != null
-        ) {
-            continuedStroke!!.continueStroke(path, 0, segment.durationMs, true)
+        val stroke = if (Build.VERSION.SDK_INT >= 26 && continuedStroke != null) {
+            // Continuing the same stroke with willContinue=false is the
+            // actual touch-up. Creating a new stroke here leaves the old
+            // joystick touch held on some Android versions.
+            continuedStroke!!.continueStroke(path, 0, segment.durationMs, segment.willContinue)
         } else if (Build.VERSION.SDK_INT >= 26) {
             GestureDescription.StrokeDescription(path, 0, segment.durationMs, segment.willContinue)
         } else {
