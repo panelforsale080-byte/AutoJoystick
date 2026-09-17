@@ -68,11 +68,8 @@ object JoystickController {
     }
 
     fun releaseStroke() {
-        val svc = AccessibilityJoystickService.instance ?: return
-        if (strokeActive) {
-            svc.fireSegment(lastEndX, lastEndY, joystickBaseX, joystickBaseY, 150, false)
-            strokeActive = false
-        }
+        strokeActive = false
+        try { AccessibilityJoystickService.instance?.endStroke() } catch (_: Throwable) {}
     }
 
     fun tick() {
@@ -140,12 +137,9 @@ object JoystickController {
     }
 
     private fun sendChain(svc: AccessibilityJoystickService, ex: Float, ey: Float) {
-        if (!strokeActive) {
-            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 420, true)
-            strokeActive = true
-        } else {
-            svc.fireSegment(lastEndX, lastEndY, ex, ey, 420, true)
-        }
+        // Hold-based: press once at base, then keep extending toward the moving target point.
+        svc.hold(joystickBaseX, joystickBaseY, ex, ey)
+        strokeActive = svc.holding()
         lastEndX = ex; lastEndY = ey
     }
 }

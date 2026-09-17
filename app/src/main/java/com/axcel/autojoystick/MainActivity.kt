@@ -54,6 +54,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             findViewById<Button>(R.id.btn_stop).setOnClickListener {
+                try { JoystickController.releaseStroke() } catch (_: Throwable) {}
                 try { stopService(Intent(this, OverlayService::class.java)) } catch (_: Throwable) {}
                 try { stopService(Intent(this, CaptureService::class.java)) } catch (_: Throwable) {}
                 log("STOP")
