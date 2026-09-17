@@ -8,6 +8,7 @@ object JoystickController {
     var joystickBaseY: Float = 0f
     var joystickRadius: Float = 180f
     var targetCoord: String = "51,35"
+    @Volatile var arrivalRadius: Float = 6f   // stop when this close to target (map units)
     @Volatile var currentXY: Pair<Int, Int>? = null
     @Volatile var running: Boolean = false
 
@@ -59,7 +60,7 @@ object JoystickController {
         OverlayBus.push("$x,$y")
         val t = parseCoord(targetCoord) ?: return
         val dist = Math.hypot((t.first - x).toDouble(), (t.second - y).toDouble())
-        if (dist <= 1.5 && running) {
+        if (dist <= arrivalRadius && running) {
             running = false
             releaseStroke()
             OverlayBus.status("ARRIVED at ${t.first},${t.second}")
@@ -94,12 +95,12 @@ object JoystickController {
                     val ey = joystickBaseY - joystickRadius * 0.6f
                     sendChain(svc, ex, ey)
                     OverlayBus.status("probing north — wait OCR")
-                    handler.postDelayed(this, 650)
+                    handler.postDelayed(this, 300)
                     return
                 }
 
                 val dist = Math.hypot((target.first - cur.first).toDouble(), (target.second - cur.second).toDouble())
-                if (dist <= 1.5) {
+                if (dist <= arrivalRadius) {
                     running = false
                     releaseStroke()
                     OverlayBus.status("ARRIVED at ${target.first},${target.second}")
@@ -125,25 +126,25 @@ object JoystickController {
                     val py = ox * unstickDir
                     sendChain(svc, joystickBaseX + px, joystickBaseY + py)
                     OverlayBus.status("STUCK — sidestep ${if (unstickDir > 0) "left" else "right"} | now ${cur.first},${cur.second} | d=%.1f".format(dist))
-                    handler.postDelayed(this, 900)
+                    handler.postDelayed(this, 700)
                     return
                 }
 
                 val ex = joystickBaseX + ox
                 val ey = joystickBaseY + oy
                 sendChain(svc, ex, ey)
-                OverlayBus.status("→ ${target.first},${target.second} | now ${cur.first},${cur.second} | d=%.1f".format(dist))
-                handler.postDelayed(this, 650)
+                OverlayBus.status("→ ${target.first},${target.second} | now ${cur.first},${cur.second} | d=%.1f (stop≤${arrivalRadius.toInt()})".format(dist))
+                handler.postDelayed(this, 300)
             }
         })
     }
 
     private fun sendChain(svc: AccessibilityJoystickService, ex: Float, ey: Float) {
         if (!strokeActive) {
-            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 500, true)
+            svc.fireSegment(joystickBaseX, joystickBaseY, ex, ey, 420, true)
             strokeActive = true
         } else {
-            svc.fireSegment(lastEndX, lastEndY, ex, ey, 500, true)
+            svc.fireSegment(lastEndX, lastEndY, ex, ey, 420, true)
         }
         lastEndX = ex; lastEndY = ey
     }

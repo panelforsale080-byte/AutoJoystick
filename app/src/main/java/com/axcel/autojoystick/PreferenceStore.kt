@@ -42,4 +42,7 @@ class PreferenceStore(ctx: Context) {
     var invert: Boolean
         get() = p.getBoolean("invert", false)
         set(v) { p.edit().putBoolean("invert", v).apply() }
+    var arrivalRange: Int   // map units; stop when within this distance of target
+        get() = p.getInt("arange", 6)
+        set(v) { p.edit().putInt("arange", v.coerceIn(1, 15)).apply() }
 }
