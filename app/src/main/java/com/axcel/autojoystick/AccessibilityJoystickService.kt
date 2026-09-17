@@ -14,7 +14,7 @@ class AccessibilityJoystickService : AccessibilityService() {
     }
 
     // Active held stroke — extended in short slices so a stop command lifts the finger fast.
-    private var activeStroke: GestureDescription.StrokeDescription? = null
+    @Volatile private var activeStroke: GestureDescription.StrokeDescription? = null
     private var lastHoldX = 0f
     private var lastHoldY = 0f
     private var strokeAgeMs: Long = 0
@@ -63,6 +63,10 @@ class AccessibilityJoystickService : AccessibilityService() {
 
     /** Lift the finger NOW: end the chain with a final short non-continuing stroke. */
     fun endStroke() {
+        ui.post { endStrokeOnUi() }
+    }
+
+    private fun endStrokeOnUi() {
         ui.removeCallbacks(watchdog)
         val cur = activeStroke ?: return
         activeStroke = null; strokeAgeMs = 0

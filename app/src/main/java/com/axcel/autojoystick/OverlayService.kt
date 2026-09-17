@@ -236,8 +236,7 @@ class OverlayService : Service() {
                 Toast.makeText(this, "Enable AutoJoystick in Accessibility first", Toast.LENGTH_LONG).show(); return@setOnClickListener
             }
             try { JoystickController.releaseStroke() } catch (_: Throwable) {}
-            JoystickController.targetCoord = t
-            JoystickController.running = true
+            JoystickController.start(t)
             JoystickController.tick()
             status.text = "running → $t"
         }

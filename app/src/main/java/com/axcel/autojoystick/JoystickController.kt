@@ -15,19 +15,28 @@ object JoystickController {
     private val handler = Handler(Looper.getMainLooper())
     private val coordRegex = Regex("""[\[\(\{<]?\s*(\d{1,3})\s*[, /\-]\s*(\d{1,3})\s*[\]\)\}>]?""")
 
-    private var strokeActive = false
+    @Volatile private var strokeActive = false
     private var lastEndX = 0f
     private var lastEndY = 0f
+    private val stateLock = Any()
 
     // --- stuck-on-wall detection state ---
     private var lastPos: Pair<Int, Int>? = null
     private var stillTicks = 0
     private var unstickDir = 1
     private var unstickOrigin: Pair<Int, Int>? = null   // where the current sidestep started
-    private var stoppedAtMs: Long = 0                    // arrival/STOP timestamp (cooldown)
+    @Volatile private var stoppedAtMs: Long = 0          // arrival/STOP timestamp (cooldown)
 
     /** System cancelled a continued gesture — next drag must start fresh from base. */
     fun strokeBroken() { strokeActive = false }
+
+    fun start(newTargetCoord: String) {
+        synchronized(stateLock) {
+            targetCoord = newTargetCoord
+            stoppedAtMs = 0
+            running = true
+        }
+    }
 
     /** One-shot diagnostic: drag right from base for 500ms. Proves base+a11y+gesture in one tap. */
     fun testDrag() {
@@ -63,15 +72,7 @@ object JoystickController {
         currentXY = x to y
         OverlayBus.push("$x,$y")
         val t = parseCoord(targetCoord) ?: return
-        val dist = Math.hypot((t.first - x).toDouble(), (t.second - y).toDouble())
-        if (dist <= arrivalRadius && running) {
-            running = false
-            stoppedAtMs = android.os.SystemClock.uptimeMillis()
-            handler.removeCallbacksAndMessages(null)
-            releaseStroke()
-            try { AccessibilityJoystickService.instance?.cancel() } catch (_: Throwable) {}
-            OverlayBus.status("ARRIVED at ${t.first},${t.second}")
-        }
+        stopAtTarget(t, x to y)
     }
 
     fun releaseStroke() {
@@ -103,15 +104,8 @@ object JoystickController {
                     return
                 }
 
+                if (stopAtTarget(target, cur)) return
                 val dist = Math.hypot((target.first - cur.first).toDouble(), (target.second - cur.second).toDouble())
-                if (dist <= arrivalRadius) {
-                    running = false
-                    stoppedAtMs = android.os.SystemClock.uptimeMillis()
-                    releaseStroke()
-                    try { svc.cancel() } catch (_: Throwable) {}
-                    OverlayBus.status("ARRIVED at ${target.first},${target.second}")
-                    return
-                }
                 // Post-stop cooldown: ignore any stray re-entry for 800ms so nothing resumes.
                 if (android.os.SystemClock.uptimeMillis() - stoppedAtMs < 800) {
                     handler.postDelayed(this, 300)
@@ -160,5 +154,33 @@ object JoystickController {
         svc.hold(joystickBaseX, joystickBaseY, ex, ey)
         strokeActive = svc.holding()
         lastEndX = ex; lastEndY = ey
+    }
+
+    /**
+     * Arrival can be detected by OCR off the controller handler, or by the next
+     * movement tick. Serialize both paths so only one of them can keep the
+     * gesture alive after entering the configured radius.
+     */
+    private fun stopAtTarget(target: Pair<Int, Int>, current: Pair<Int, Int>): Boolean {
+        val distance = Math.hypot(
+            (target.first - current.first).toDouble(),
+            (target.second - current.second).toDouble()
+        )
+        val shouldStop = synchronized(stateLock) {
+            if (!running || distance > arrivalRadius) {
+                false
+            } else {
+                running = false
+                stoppedAtMs = android.os.SystemClock.uptimeMillis()
+                true
+            }
+        }
+        if (!shouldStop) return false
+
+        handler.removeCallbacksAndMessages(null)
+        releaseStroke()
+        try { AccessibilityJoystickService.instance?.cancel() } catch (_: Throwable) {}
+        OverlayBus.status("ARRIVED at ${target.first},${target.second} | d=%.1f".format(distance))
+        return true
     }
 }
