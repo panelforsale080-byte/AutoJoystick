@@ -52,7 +52,6 @@ class LearnedObstacleStore(ctx: Context) {
 
     @Synchronized
     fun record(x: Int, y: Int, escapeX: Float, escapeY: Float) {
-        if (x !in 0..400 || y !in 0..400) return
         val safeLength = hypot(escapeX.toDouble(), escapeY.toDouble()).coerceAtLeast(0.01)
         val nextEscapeX = (escapeX / safeLength).toFloat()
         val nextEscapeY = (escapeY / safeLength).toFloat()
@@ -101,19 +100,26 @@ class LearnedObstacleStore(ctx: Context) {
         val candidate = all()
             .asSequence()
             .filter {
-                hypot(
-                    (it.x - target.first).toDouble(),
-                    (it.y - target.second).toDouble()
-                ) > arrivalRadius
+                // A single observation is only a candidate. It must be seen
+                // again before it can influence a future route.
+                it.hits >= MIN_CONFIRMATION_HITS
             }
-            .map { obstacle ->
+            .mapNotNull { obstacle ->
                 val projection = (
                     (obstacle.x - current.first) * vx +
                         (obstacle.y - current.second) * vy
                     ) / lineLengthSquared
-                val t = projection.coerceIn(0.0, 1.0)
-                val closestX = current.first + t * vx
-                val closestY = current.second + t * vy
+                // Never detour toward a learned point that is already behind
+                // the character; that was a source of route circling.
+                if (projection !in 0.0..1.0) return@mapNotNull null
+                if (hypot(
+                    (obstacle.x - target.first).toDouble(),
+                    (obstacle.y - target.second).toDouble()
+                ) <= arrivalRadius) {
+                    return@mapNotNull null
+                }
+                val closestX = current.first + projection * vx
+                val closestY = current.second + projection * vy
                 val routeDistance = hypot(
                     obstacle.x - closestX,
                     obstacle.y - closestY
@@ -122,10 +128,10 @@ class LearnedObstacleStore(ctx: Context) {
                     (obstacle.x - current.first).toDouble(),
                     (obstacle.y - current.second).toDouble()
                 )
+                if (routeDistance > ROUTE_CORRIDOR && currentDistance > NEARBY_RADIUS) {
+                    return@mapNotNull null
+                }
                 obstacle to (routeDistance to currentDistance)
-            }
-            .filter { (_, distances) ->
-                distances.first <= ROUTE_CORRIDOR || distances.second <= NEARBY_RADIUS
             }
             .minByOrNull { it.second.first }
             ?: return null
@@ -135,19 +141,36 @@ class LearnedObstacleStore(ctx: Context) {
         val escapeLength = hypot(obstacle.escapeX.toDouble(), obstacle.escapeY.toDouble())
             .coerceAtLeast(0.01)
         val detourDistance = if (distanceFromObstacle <= NEARBY_RADIUS) 8.0 else 6.0
-        return (
+        val waypoint = (
             obstacle.x + obstacle.escapeX / escapeLength * detourDistance
             ).roundToInt() to (
             obstacle.y + obstacle.escapeY / escapeLength * detourDistance
             ).roundToInt()
+
+        // Do not replace a valid direct route with a waypoint that is already
+        // under the character or effectively at the destination.
+        val waypointFromCurrent = hypot(
+            (waypoint.first - current.first).toDouble(),
+            (waypoint.second - current.second).toDouble()
+        )
+        val waypointToTarget = hypot(
+            (waypoint.first - target.first).toDouble(),
+            (waypoint.second - target.second).toDouble()
+        )
+        if (waypointFromCurrent < 2.0 || waypointToTarget <= arrivalRadius) {
+            return null
+        }
+        return waypoint
     }
 
     @Synchronized
-    fun count(): Int = all().size
+    fun count(): Int = all().count { it.hits >= MIN_CONFIRMATION_HITS }
 
     @Synchronized
     fun clear() {
-        prefs.edit().remove(KEY).apply()
+        // Remove the old pre-confirmation key too. Those entries were allowed
+        // to affect routing after a single false stuck detection.
+        prefs.edit().remove(KEY).remove(LEGACY_KEY).apply()
     }
 
     private fun save(items: List<LearnedObstacle>) {
@@ -167,8 +190,10 @@ class LearnedObstacleStore(ctx: Context) {
     }
 
     private companion object {
-        const val KEY = "obstacles"
+        const val KEY = "obstacles_v2"
+        const val LEGACY_KEY = "obstacles"
         const val MAX_ENTRIES = 80
+        const val MIN_CONFIRMATION_HITS = 2
         const val MERGE_RADIUS = 2.5
         const val NEARBY_RADIUS = 4.5
         const val ROUTE_CORRIDOR = 4.0

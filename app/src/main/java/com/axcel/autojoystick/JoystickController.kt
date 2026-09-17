@@ -31,6 +31,8 @@ object JoystickController {
     private var recoveryStage = 0
     private var recoveryCooldownUntil = 0L
     private var lastOcrAt = 0L
+    private var positionVersion = 0L
+    private var lastHandledPositionVersion = -1L
     private var probeTicks = 0
     private var learnedForCurrentStuck = false
     private var learnedStore: LearnedObstacleStore? = null
@@ -38,9 +40,9 @@ object JoystickController {
     private const val TICK_MS = 260L
     private const val GESTURE_MS = 240L
     private const val OCR_STALE_MS = 1_800L
-    private const val STUCK_SAME_POSITION_TICKS = 5
-    private const val STUCK_NO_PROGRESS_TICKS = 6
-    private const val MAX_RECOVERY_ATTEMPTS = 6
+    private const val STUCK_SAME_POSITION_UPDATES = 4
+    private const val STUCK_NO_PROGRESS_UPDATES = 5
+    private const val MIN_FAILED_RECOVERIES_TO_LEARN = 2
     private const val PROGRESS_EPSILON = 0.75
     private const val MAX_PROBE_TICKS = 10
 
@@ -98,6 +100,7 @@ object JoystickController {
     private fun acceptPositionUpdate(x: Int, y: Int) {
         currentXY = x to y
         lastOcrAt = SystemClock.elapsedRealtime()
+        positionVersion++
         OverlayBus.push("$x,$y")
         val t = parseCoord(targetCoord) ?: return
         val dist = Math.hypot((t.first - x).toDouble(), (t.second - y).toDouble())
@@ -126,6 +129,7 @@ object JoystickController {
         recoveryAttempts = 0
         recoveryStage = 0
         recoveryCooldownUntil = 0L
+        lastHandledPositionVersion = -1L
         probeTicks = 0
         learnedForCurrentStuck = false
         val target = parseCoord(targetCoord) ?: run {
@@ -173,29 +177,39 @@ object JoystickController {
                     return
                 }
 
-                // A character can move by a pixel while still being pinned to an
-                // obstacle. Track both exact movement and distance-to-target progress.
-                val lp = lastPos
-                if (lp != null && Math.hypot((cur.first - lp.first).toDouble(), (cur.second - lp.second).toDouble()) < 1.0) {
-                    stillTicks++
-                } else {
-                    stillTicks = 0
-                }
-                lastPos = cur
-
-                val madeProgress = bestDistance == Double.POSITIVE_INFINITY ||
-                    dist < bestDistance - PROGRESS_EPSILON
-                if (madeProgress) {
-                    bestDistance = dist
-                    noProgressTicks = 0
-                    if (recoveryAttempts > 0) {
-                        OverlayBus.status("RECOVERED | now ${cur.first},${cur.second} | d=%.1f".format(dist))
-                        recoveryAttempts = 0
-                        recoveryStage = 0
-                        learnedForCurrentStuck = false
+                /*
+                 * The control tick is faster than OCR. Counting ticks here makes
+                 * a normal, open route look stuck whenever two ticks see the same
+                 * OCR sample. Only update stuck counters when a new OCR result
+                 * arrives; this prevents false obstacle learning caused by OCR
+                 * latency or a temporarily unchanged coordinate.
+                 */
+                if (positionVersion != lastHandledPositionVersion) {
+                    lastHandledPositionVersion = positionVersion
+                    val lp = lastPos
+                    if (lp != null &&
+                        Math.hypot((cur.first - lp.first).toDouble(), (cur.second - lp.second).toDouble()) < 1.0
+                    ) {
+                        stillTicks++
+                    } else {
+                        stillTicks = 0
                     }
-                } else {
-                    noProgressTicks++
+                    lastPos = cur
+
+                    val madeProgress = bestDistance == Double.POSITIVE_INFINITY ||
+                        dist < bestDistance - PROGRESS_EPSILON
+                    if (madeProgress) {
+                        bestDistance = dist
+                        noProgressTicks = 0
+                        if (recoveryAttempts > 0) {
+                            OverlayBus.status("RECOVERED | now ${cur.first},${cur.second} | d=%.1f".format(dist))
+                            recoveryAttempts = 0
+                            recoveryStage = 0
+                            learnedForCurrentStuck = false
+                        }
+                    } else {
+                        noProgressTicks++
+                    }
                 }
 
                 if (now < recoveryCooldownUntil) {
@@ -206,14 +220,9 @@ object JoystickController {
 
                 val (ox, oy) = computeDrag(cur, target)
                 val stuck = dist > arrivalRadius + 1.0 &&
-                    (stillTicks >= STUCK_SAME_POSITION_TICKS || noProgressTicks >= STUCK_NO_PROGRESS_TICKS)
+                    (stillTicks >= STUCK_SAME_POSITION_UPDATES ||
+                        noProgressTicks >= STUCK_NO_PROGRESS_UPDATES)
                 if (stuck && now >= recoveryCooldownUntil) {
-                    if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
-                        running = false
-                        releaseStroke()
-                        OverlayBus.status("STUCK — stopped safely after $MAX_RECOVERY_ATTEMPTS recoveries")
-                        return
-                    }
                     recoverFromStuck(svc, cur, ox, oy, dist, now)
                     handler.postDelayed(this, 320L)
                     return
@@ -264,13 +273,21 @@ object JoystickController {
         bestDistance = dist
         recoveryCooldownUntil = now + 1_100L
 
-        // Explicitly lift the old chain before changing direction. This avoids
-        // carrying a blocked gesture into the recovery gesture.
-        if (!learnedForCurrentStuck) {
+        /*
+         * One failed probe is not enough evidence of an obstacle: OCR may be
+         * late, the game may be animating, or the joystick may have missed a
+         * slice. Require two failed recovery directions before saving a map
+         * observation. The map y-axis is opposite the screen/joystick y-axis,
+         * so convert the joystick vector into map space instead of negating
+         * both axes.
+         */
+        if (!learnedForCurrentStuck &&
+            recoveryAttempts >= MIN_FAILED_RECOVERIES_TO_LEARN
+        ) {
             learnedStore?.record(
                 current.first,
                 current.second,
-                -recovery.first / radius,
+                recovery.first / radius,
                 -recovery.second / radius
             )
             learnedForCurrentStuck = true
@@ -284,8 +301,9 @@ object JoystickController {
             1 -> "diagonal-slide"
             else -> "reverse escape"
         }
+        val learningState = if (learnedForCurrentStuck) "obstacle confirmed" else "testing route"
         OverlayBus.status(
-            "STUCK #$recoveryAttempts — $mode | d=%.1f | learned=${learnedStore?.count() ?: 0}"
+            "STUCK #$recoveryAttempts — $mode | $learningState | d=%.1f | learned=${learnedStore?.count() ?: 0}"
                 .format(dist)
         )
     }
