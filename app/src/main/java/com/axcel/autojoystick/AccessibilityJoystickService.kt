@@ -47,6 +47,13 @@ class AccessibilityJoystickService : AccessibilityService() {
         }
     }
 
+    /** HARD stop: cancel the active gesture immediately (no momentum), then lift. */
+    fun cancel() {
+        if (activeStroke == null) return
+        activeStroke = null; strokeAgeMs = 0
+        try { dispatchGesture(GestureDescription.Builder().build(), null, null) } catch (_: Throwable) {}
+    }
+
     /** Lift the finger (stop walking). */
     fun endStroke() {
         val cur = activeStroke ?: return

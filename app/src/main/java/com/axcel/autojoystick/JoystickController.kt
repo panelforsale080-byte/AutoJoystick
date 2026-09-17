@@ -23,6 +23,8 @@ object JoystickController {
     private var lastPos: Pair<Int, Int>? = null
     private var stillTicks = 0
     private var unstickDir = 1
+    private var unstickOrigin: Pair<Int, Int>? = null   // where the current sidestep started
+    private var stoppedAtMs: Long = 0                    // arrival/STOP timestamp (cooldown)
 
     /** System cancelled a continued gesture — next drag must start fresh from base. */
     fun strokeBroken() { strokeActive = false }
@@ -64,7 +66,10 @@ object JoystickController {
         val dist = Math.hypot((t.first - x).toDouble(), (t.second - y).toDouble())
         if (dist <= arrivalRadius && running) {
             running = false
+            stoppedAtMs = android.os.SystemClock.uptimeMillis()
+            handler.removeCallbacksAndMessages(null)
             releaseStroke()
+            try { AccessibilityJoystickService.instance?.cancel() } catch (_: Throwable) {}
             OverlayBus.status("ARRIVED at ${t.first},${t.second}")
         }
     }
@@ -101,8 +106,15 @@ object JoystickController {
                 val dist = Math.hypot((target.first - cur.first).toDouble(), (target.second - cur.second).toDouble())
                 if (dist <= arrivalRadius) {
                     running = false
+                    stoppedAtMs = android.os.SystemClock.uptimeMillis()
                     releaseStroke()
+                    try { svc.cancel() } catch (_: Throwable) {}
                     OverlayBus.status("ARRIVED at ${target.first},${target.second}")
+                    return
+                }
+                // Post-stop cooldown: ignore any stray re-entry for 800ms so nothing resumes.
+                if (android.os.SystemClock.uptimeMillis() - stoppedAtMs < 800) {
+                    handler.postDelayed(this, 300)
                     return
                 }
 
@@ -117,14 +129,19 @@ object JoystickController {
 
                 val (ox, oy) = computeDrag(cur, target)
                 if (stillTicks >= 6 && dist > 2.5 && strokeActive) {
-                    // Wall-stuck: drag PERPENDICULAR (±90°) to slide along the wall,
-                    // alternating side each episode, then resume normal pathing next tick.
+                    // Wall-stuck: sidestep PERPENDICULAR. If we're stuck at (≈) the same spot
+                    // as the previous episode, we looped back into the same wall — flip side
+                    // so we slide the other way instead of yo-yoing against it.
+                    val origin = unstickOrigin
+                    val loopedBack = origin != null &&
+                        Math.hypot((cur.first - origin.first).toDouble(), (cur.second - origin.second).toDouble()) < 2.0
+                    if (loopedBack) unstickDir = -unstickDir
+                    unstickOrigin = cur
                     stillTicks = 0
-                    unstickDir = -unstickDir
                     val px = -oy * unstickDir
                     val py = ox * unstickDir
                     sendChain(svc, joystickBaseX + px, joystickBaseY + py)
-                    OverlayBus.status("STUCK — sidestep ${if (unstickDir > 0) "left" else "right"} | now ${cur.first},${cur.second} | d=%.1f".format(dist))
+                    OverlayBus.status("STUCK — sidestep ${if (unstickDir > 0) "left" else "right"}${if (loopedBack) " (flipped)" else ""} | now ${cur.first},${cur.second} | d=%.1f".format(dist))
                     handler.postDelayed(this, 700)
                     return
                 }
