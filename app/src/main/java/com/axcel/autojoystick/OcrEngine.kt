@@ -10,10 +10,6 @@ object OcrEngine {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     // tolerant: (131,116), 131/116, 131 116, [131,116], {131, 116}
     val coordRegex = Regex("""[\[\(\{<]?\s*(\d{1,3})\s*[, /\-]\s*(\d{1,3})\s*[\]\)\}>]?""")
-    private val looseCoordRegex =
-        Regex("""(?<!\d)(\d{1,3})\s*[,;:/\-]\s*(\d{1,3})(?!\d)""")
-    private val spacedCoordRegex =
-        Regex("""(?<!\d)(\d{1,3})\s+(\d{1,3})(?!\d)""")
 
     data class Result(val coord: Pair<Int, Int>?, val rawText: String)
 
@@ -43,17 +39,15 @@ object OcrEngine {
                         for (line in block.lines) {
                             if (raw.isNotEmpty()) raw.append('\n')
                             raw.append(line.text)
-
-                            // Prefer element matches, but fall back to the full
-                            // line. ML Kit can split "(49,5)" into separate
-                            // elements such as "(49" and "5)", which used to
-                            // make the controller miss every arrival update.
                             for (el in line.elements) {
-                                best = parseCandidate(el.text)
-                                if (best != null) break
-                            }
-                            if (best == null) {
-                                best = parseCandidate(line.text)
+                                val m = coordRegex.find(el.text) ?: continue
+                                val xRaw = m.groupValues[1].toIntOrNull() ?: continue
+                                val yRaw = m.groupValues[2].toIntOrNull() ?: continue
+                                val x = fixLeadingParenOne(el.text, xRaw)
+                                val y = yRaw
+                                if (x in 0..400 && y in 0..400) {
+                                    best = x to y; break
+                                }
                             }
                             if (best != null) break
                         }
@@ -70,16 +64,5 @@ object OcrEngine {
             Log.w("AJOCR", "throw: ${t.message}")
             onResult(Result(null, ""))
         }
-    }
-
-    private fun parseCandidate(text: String): Pair<Int, Int>? {
-        val match = coordRegex.find(text)
-            ?: looseCoordRegex.find(text)
-            ?: spacedCoordRegex.find(text)
-            ?: return null
-        val xRaw = match.groupValues[1].toIntOrNull() ?: return null
-        val y = match.groupValues[2].toIntOrNull() ?: return null
-        val x = fixLeadingParenOne(text, xRaw)
-        return if (x in 0..400 && y in 0..400) x to y else null
     }
 }

@@ -127,14 +127,11 @@ class OverlayService : Service() {
         val contrastBar = v.findViewById<SeekBar>(R.id.ov_contrast)
         val brightBar = v.findViewById<SeekBar>(R.id.ov_brightness)
         val invertSwitch = v.findViewById<Switch>(R.id.ov_invert)
-        val rangeBar = v.findViewById<SeekBar>(R.id.ov_range)
 
         targetInput.setText(JoystickController.targetCoord)
         contrastBar.progress = ((prefs.contrast - 0.5f) * 100f).toInt().coerceIn(0, 250)
         brightBar.progress = (prefs.brightness + 128).coerceIn(0, 256)
         invertSwitch.isChecked = prefs.invert
-        JoystickController.arrivalRadius = prefs.arrivalRange.toFloat()
-        rangeBar.progress = (prefs.arrivalRange - 1).coerceIn(0, 14)
 
         title.setOnTouchListener(object : View.OnTouchListener {
             var sx = 0; var sy = 0; var px = 0f; var py = 0f
@@ -210,17 +207,6 @@ class OverlayService : Service() {
             prefs.invert = c
             status.text = "invert=$c"
         }
-        rangeBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
-                if (!fromUser) return
-                val value = p + 1
-                prefs.arrivalRange = value
-                JoystickController.arrivalRadius = value.toFloat()
-                status.text = "arrival range=$value"
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
-        })
 
         btnStart.setOnClickListener {
             val t = targetInput.text.toString().trim().ifBlank { "51,35" }
@@ -236,7 +222,8 @@ class OverlayService : Service() {
                 Toast.makeText(this, "Enable AutoJoystick in Accessibility first", Toast.LENGTH_LONG).show(); return@setOnClickListener
             }
             try { JoystickController.releaseStroke() } catch (_: Throwable) {}
-            JoystickController.start(t)
+            JoystickController.targetCoord = t
+            JoystickController.running = true
             JoystickController.tick()
             status.text = "running → $t"
         }
